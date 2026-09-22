@@ -1,11 +1,763 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="sv">
 <head>
 <meta charset="UTF-8">
-<title>HuntManagement Web</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HuntManagement — Webbredigerare</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A6%8C%3C/text%3E%3C/svg%3E">
+<style>
+  :root {
+    --border: #d8d8d8;
+    --bg: #ffffff;
+    --bg-alt: #f6f6f4;
+    --text: #1c1c1c;
+    --muted: #6b6b6b;
+    --accent: #2e5e3e;
+    --accent-bg: #eaf2ec;
+    --danger: #a6362c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: var(--text);
+    background: var(--bg-alt);
+  }
+  header.top {
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 20px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+  }
+  header.top h1 {
+    font-size: 17px;
+    margin: 0;
+    font-weight: 600;
+  }
+  header.top .sub {
+    color: var(--muted);
+    font-size: 13px;
+  }
+  header.top .spacer { flex: 1; }
+  button, .btn {
+    font: inherit;
+    font-size: 13px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 12px;
+    cursor: pointer;
+    color: var(--text);
+  }
+  button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+  }
+  button.danger { color: var(--danger); border-color: var(--danger); }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.small { padding: 3px 8px; font-size: 12px; }
+  nav.tabs {
+    display: flex;
+    gap: 4px;
+    padding: 10px 20px 0;
+    background: var(--bg-alt);
+  }
+  nav.tabs button {
+    border-radius: 8px 8px 0 0;
+    border-bottom: none;
+    background: var(--bg-alt);
+    color: var(--muted);
+  }
+  nav.tabs button.active {
+    background: var(--bg);
+    color: var(--text);
+    font-weight: 600;
+  }
+  main {
+    padding: 20px;
+    max-width: 980px;
+    margin: 0 auto;
+  }
+  .panel {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 0 8px 8px 8px;
+    padding: 18px;
+  }
+  .empty-state {
+    text-align: center;
+    color: var(--muted);
+    padding: 60px 20px;
+  }
+  .field-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 10px 16px;
+    margin-bottom: 18px;
+  }
+  label.field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  input, select {
+    font: inherit;
+    font-size: 13px;
+    padding: 5px 7px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .drive-card {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+  .drive-card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--bg-alt);
+    padding: 8px 12px;
+    flex-wrap: wrap;
+  }
+  .drive-card-header .drive-name {
+    font-weight: 600;
+    font-size: 14px;
+    min-width: 140px;
+  }
+  .drive-card-header .rally {
+    flex: 1;
+    min-width: 180px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .drive-card-header .rally input { flex: 1; }
+  table.assign {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  table.assign th {
+    text-align: left;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    padding: 6px 8px;
+  }
+  table.assign td {
+    padding: 5px 8px;
+    border-bottom: 1px solid #eee;
+    vertical-align: middle;
+  }
+  table.assign input, table.assign select { width: 100%; }
+  .post-label {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .add-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    padding: 8px 12px;
+    background: var(--bg-alt);
+    flex-wrap: wrap;
+  }
+  .add-row input { width: 90px; }
+  .add-row .desc { width: 160px; }
+  .drive-tabs {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  .drive-tabs button.active { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+  .readonly {
+    color: var(--muted);
+  }
+  #fileInput { display: none; }
+  .hint {
+    font-size: 12px;
+    color: var(--muted);
+    margin: -8px 0 16px;
+  }
+
+  /* --- Report --- */
+  #reportRoot {
+    background: white;
+    color: black;
+    padding: 12px;
+  }
+  #reportRoot h2 {
+    font-size: 16px;
+    margin: 0 0 10px;
+  }
+  .report-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 20px;
+  }
+  .report-drive {
+    margin-bottom: 14px;
+    break-inside: avoid;
+  }
+  .report-drive h3 {
+    font-size: 13px;
+    margin: 0 0 4px;
+  }
+  .report-group h4 {
+    font-size: 12px;
+    text-decoration: underline;
+    font-weight: 600;
+    margin: 6px 0 2px;
+  }
+  .report-row {
+    display: flex;
+    gap: 6px;
+    font-size: 12px;
+    padding: 1px 0;
+  }
+  .report-row .rp { width: 46px; flex: none; font-variant-numeric: tabular-nums; }
+  .report-row .rn { flex: 1; }
+  .report-row .rc { color: #444; }
+
+  @media print {
+    .no-print { display: none !important; }
+    body { background: white; }
+    main { padding: 0; max-width: none; }
+    .panel { border: none; padding: 0; border-radius: 0; }
+    @page { size: A4; margin: 12mm; }
+  }
+</style>
 </head>
 <body>
-<h1>HuntManagement Web</h1>
-<p>This page is a placeholder. The hunt editor (drives, posts, cars, hunters, report) goes here next.</p>
+
+<header class="top no-print">
+  <h1>HuntManagement</h1>
+  <span class="sub" id="eventSummary">Ingen jaktdag inläst</span>
+  <span class="spacer"></span>
+  <input type="file" id="fileInput" accept="application/json">
+  <button class="btn" id="openBtn">Öppna fil…</button>
+  <button class="btn primary" id="saveBtn" disabled>Spara ändringar…</button>
+</header>
+
+<nav class="tabs no-print" id="tabs">
+  <button data-tab="setup" class="active">Förberedelse</button>
+  <button data-tab="assign">Tilldelning</button>
+  <button data-tab="report">Rapport</button>
+</nav>
+
+<main>
+  <div class="panel" id="app">
+    <div class="empty-state">
+      Öppna en exporterad jaktdags-fil (JSON) för att börja, eller ladda
+      exempeldata: <button class="btn small" id="loadSampleBtn">öppna exempeldata</button>
+    </div>
+  </div>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  const ROLES = ["Hundförare", "Utställare"];
+
+  /** @type {any} */
+  let state = null;
+  let ui = { tab: "setup", selectedEventDriveLocalId: null };
+
+  // ---------- helpers ----------
+
+  function uid(prefix) {
+    return prefix + Math.random().toString(36).slice(2, 9);
+  }
+
+  function numberLabel(post) {
+    return (post.postNumber || "") + (post.code || "");
+  }
+
+  function displayLabel(post) {
+    let l = numberLabel(post);
+    if (post.type) l += " (" + post.type + ")";
+    return l;
+  }
+
+  function findPost(postNumber, postCode) {
+    return state.posts.find(
+      (p) => p.postNumber === postNumber && (p.code || "") === (postCode || "")
+    );
+  }
+
+  function comparePosts(a, b) {
+    const pa = findPost(a.postNumber, a.postCode) || { postNumber: a.postNumber, code: a.postCode };
+    const pb = findPost(b.postNumber, b.postCode) || { postNumber: b.postNumber, code: b.postCode };
+    const na = parseFloat(pa.postNumber);
+    const nb = parseFloat(pb.postNumber);
+    const va = isNaN(na) ? Infinity : na;
+    const vb = isNaN(nb) ? Infinity : nb;
+    if (va !== vb) return va - vb;
+    const ca = pa.code || "";
+    const cb = pb.code || "";
+    if (ca !== cb) return ca < cb ? -1 : 1;
+    return 0;
+  }
+
+  function assignmentsForDrive(localId) {
+    return state.postAssignments
+      .filter((pa) => pa.eventDriveLocalId === localId)
+      .sort((a, b) => a.sortOrder - b.sortOrder);
+  }
+
+  function hunterByUUID(u) {
+    return state.hunters.find((h) => h.uuid === u);
+  }
+
+  function assigneeName(pa) {
+    if (pa.assigneeType === "hunter" && pa.hunterUUID) {
+      const h = hunterByUUID(pa.hunterUUID);
+      return h ? h.name : "Okänd jägare";
+    }
+    if (pa.assigneeType === "role" && pa.role) return pa.role;
+    return "Ej tilldelad";
+  }
+
+  function orderedEventDrives() {
+    return [...state.eventDrives].sort((a, b) => a.driveOrder - b.driveOrder);
+  }
+
+  function carValueList() {
+    const set = new Set();
+    state.postAssignments.forEach((pa) => {
+      if (pa.car) set.add(pa.car);
+    });
+    return [...set];
+  }
+
+  // ---------- file load / save ----------
+
+  function loadPackage(pkg) {
+    if (!pkg || pkg.packageVersion !== 1) {
+      alert("Filen känns inte igen som en giltig jaktdags-fil (packageVersion saknas eller stämmer inte).");
+      return;
+    }
+    state = pkg;
+    ui = { tab: "setup", selectedEventDriveLocalId: null };
+    document.getElementById("saveBtn").disabled = false;
+    render();
+  }
+
+  function handleFile(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        loadPackage(JSON.parse(reader.result));
+      } catch (e) {
+        alert("Kunde inte läsa filen: " + e.message);
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  function exportPackage() {
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const datePart = (state.event.date || "event").replaceAll("-", "");
+    a.href = url;
+    a.download = "hunt-" + datePart + ".json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  // ---------- rendering ----------
+
+  function render() {
+    document.getElementById("eventSummary").textContent = state
+      ? (state.event.locationName || "Okänd plats") + " — " + (state.event.date || "")
+      : "Ingen jaktdag inläst";
+
+    document.querySelectorAll("nav.tabs button").forEach((b) => {
+      b.classList.toggle("active", b.dataset.tab === ui.tab);
+    });
+
+    const app = document.getElementById("app");
+    if (!state) {
+      app.innerHTML =
+        '<div class="empty-state">Öppna en exporterad jaktdags-fil (JSON) för att börja, eller ladda exempeldata: ' +
+        '<button class="btn small" id="loadSampleBtn">öppna exempeldata</button></div>';
+      document.getElementById("loadSampleBtn").onclick = loadSample;
+      return;
+    }
+
+    if (ui.tab === "setup") renderSetup(app);
+    else if (ui.tab === "assign") renderAssign(app);
+    else renderReport(app);
+  }
+
+  function bindPlainField(el, obj, key, parse) {
+    el.value = obj[key] == null ? "" : obj[key];
+    el.oninput = () => {
+      const v = el.value === "" ? null : el.value;
+      obj[key] = parse ? parse(v) : v;
+      document.getElementById("eventSummary").textContent =
+        (state.event.locationName || "Okänd plats") + " — " + (state.event.date || "");
+    };
+  }
+
+  // ---- Setup tab (Förberedelse): event fields, drives, posts+car+order ----
+
+  function renderSetup(app) {
+    const wrap = document.createElement("div");
+
+    const grid = document.createElement("div");
+    grid.className = "field-grid";
+    grid.innerHTML =
+      '<label class="field">Datum<input data-f="date" type="date"></label>' +
+      '<label class="field">Plats<input data-f="locationName" type="text"></label>' +
+      '<label class="field">Jakttyp<input data-f="huntType" type="text"></label>' +
+      '<label class="field">Kommentar<input data-f="comment" type="text"></label>';
+    wrap.appendChild(grid);
+    grid.querySelectorAll("input").forEach((el) => bindPlainField(el, state.event, el.dataset.f));
+
+    const driveList = document.createElement("div");
+    orderedEventDrives().forEach((ed, idx, arr) => {
+      driveList.appendChild(renderDriveCardSetup(ed, idx === 0, idx === arr.length - 1));
+    });
+    wrap.appendChild(driveList);
+
+    const addDriveRow = document.createElement("div");
+    addDriveRow.className = "add-row";
+    addDriveRow.style.borderRadius = "8px";
+    addDriveRow.innerHTML =
+      '<input list="driveCatalog" id="newDriveName" placeholder="Namn på drev">' +
+      '<datalist id="driveCatalog">' +
+      state.drives.map((d) => '<option value="' + escapeAttr(d.name) + '">').join("") +
+      "</datalist>" +
+      '<button class="btn small" id="addDriveBtn">+ Lägg till drev</button>';
+    wrap.appendChild(addDriveRow);
+
+    app.innerHTML = "";
+    app.appendChild(wrap);
+
+    document.getElementById("addDriveBtn").onclick = () => {
+      const nameInput = document.getElementById("newDriveName");
+      const name = nameInput.value.trim();
+      if (!name) return;
+      if (!state.drives.find((d) => d.name === name)) state.drives.push({ name });
+      const maxOrder = state.eventDrives.reduce((m, ed) => Math.max(m, ed.driveOrder), 0);
+      state.eventDrives.push({
+        localId: uid("ed"),
+        driveName: name,
+        driveOrder: maxOrder + 1,
+        reassemblyPoint: null,
+      });
+      render();
+    };
+  }
+  function renderDriveCardSetup(ed, isFirst, isLast) {
+    const card = document.createElement("div");
+    card.className = "drive-card";
+
+    const header = document.createElement("div");
+    header.className = "drive-card-header";
+    header.innerHTML =
+      '<span class="drive-name">Såt ' + ed.driveOrder + ": " + escapeHtml(ed.driveName) + "</span>" +
+      '<span class="rally">Återsamlingsplats: <input type="text" data-rally></span>' +
+      '<button class="btn small" data-up' + (isFirst ? " disabled" : "") + ">↑</button>" +
+      '<button class="btn small" data-down' + (isLast ? " disabled" : "") + ">↓</button>" +
+      '<button class="btn small danger" data-del-drive>Ta bort drev</button>';
+    card.appendChild(header);
+
+    const rallyInput = header.querySelector("[data-rally]");
+    bindPlainField(rallyInput, ed, "reassemblyPoint");
+
+    header.querySelector("[data-up]").onclick = () => moveDrive(ed, -1);
+    header.querySelector("[data-down]").onclick = () => moveDrive(ed, 1);
+    header.querySelector("[data-del-drive]").onclick = () => {
+      if (!confirm('Ta bort "' + ed.driveName + '" och alla dess poster från den här jaktdagen?')) return;
+      state.eventDrives = state.eventDrives.filter((x) => x.localId !== ed.localId);
+      state.postAssignments = state.postAssignments.filter((pa) => pa.eventDriveLocalId !== ed.localId);
+      render();
+    };
+
+    const table = document.createElement("table");
+    table.className = "assign";
+    table.innerHTML =
+      "<thead><tr><th>Post</th><th>Bil</th><th>Ordning</th><th></th></tr></thead><tbody></tbody>";
+    const tbody = table.querySelector("tbody");
+
+    assignmentsForDrive(ed.localId).forEach((pa) => {
+      const tr = document.createElement("tr");
+      const post = findPost(pa.postNumber, pa.postCode) || { postNumber: pa.postNumber, code: pa.postCode };
+      tr.innerHTML =
+        '<td class="post-label">' + escapeHtml(displayLabel(post)) + "</td>" +
+        '<td><input list="carValues" data-car></td>' +
+        '<td><input type="number" step="0.1" data-order style="width:70px"></td>' +
+        '<td><button class="btn small danger" data-del>Ta bort</button></td>';
+      bindPlainField(tr.querySelector("[data-car]"), pa, "car");
+      bindPlainField(tr.querySelector("[data-order]"), pa, "carOrder", (v) => (v === null ? null : parseFloat(v)));
+      tr.querySelector("[data-del]").onclick = () => {
+        state.postAssignments = state.postAssignments.filter((x) => x !== pa);
+        render();
+      };
+      tbody.appendChild(tr);
+    });
+
+    card.appendChild(table);
+
+    const addRow = document.createElement("div");
+    addRow.className = "add-row";
+    addRow.innerHTML =
+      '<input class="num" data-num placeholder="Nr">' +
+      '<input class="num" data-code placeholder="Kod">' +
+      '<input class="desc" data-typ placeholder="Typ (valfritt)">' +
+      '<button class="btn small" data-add-post>+ Lägg till post</button>' +
+      '<datalist id="carValues">' +
+      carValueList().map((c) => '<option value="' + escapeAttr(c) + '">').join("") +
+      "</datalist>";
+    card.appendChild(addRow);
+
+    addRow.querySelector("[data-add-post]").onclick = () => {
+      const num = addRow.querySelector("[data-num]").value.trim();
+      const code = addRow.querySelector("[data-code]").value.trim();
+      const typ = addRow.querySelector("[data-typ]").value.trim();
+      if (!num) return;
+      if (!findPost(num, code)) {
+        state.posts.push({ postNumber: num, code: code || "", type: typ || null, description: null, isRetired: false });
+      }
+      const existing = assignmentsForDrive(ed.localId);
+      if (existing.find((pa) => pa.postNumber === num && (pa.postCode || "") === code)) {
+        alert("Den posten finns redan på det här drevet.");
+        return;
+      }
+      const maxSort = existing.reduce((m, pa) => Math.max(m, pa.sortOrder), -1);
+      state.postAssignments.push({
+        id: uid("pa"),
+        eventDriveLocalId: ed.localId,
+        postNumber: num,
+        postCode: code,
+        assigneeType: null,
+        hunterUUID: null,
+        role: null,
+        car: null,
+        carOrder: null,
+        comment: null,
+        sortOrder: maxSort + 1,
+      });
+      render();
+    };
+
+    return card;
+  }
+
+  function moveDrive(ed, dir) {
+    const ordered = orderedEventDrives();
+    const idx = ordered.findIndex((x) => x.localId === ed.localId);
+    const swapIdx = idx + dir;
+    if (swapIdx < 0 || swapIdx >= ordered.length) return;
+    const a = ordered[idx], b = ordered[swapIdx];
+    const tmp = a.driveOrder;
+    a.driveOrder = b.driveOrder;
+    b.driveOrder = tmp;
+    render();
+  }
+
+  // ---- Assign tab (Tilldelning): per-drive Jägare + Resultat ----
+
+  function renderAssign(app) {
+    const wrap = document.createElement("div");
+    const ordered = orderedEventDrives();
+
+    if (ordered.length === 0) {
+      wrap.innerHTML = '<div class="empty-state">Inga drev inlagda ännu. Lägg till drev under Förberedelse.</div>';
+      app.innerHTML = "";
+      app.appendChild(wrap);
+      return;
+    }
+
+    if (!ui.selectedEventDriveLocalId || !ordered.find((ed) => ed.localId === ui.selectedEventDriveLocalId)) {
+      ui.selectedEventDriveLocalId = ordered[0].localId;
+    }
+
+    const driveTabs = document.createElement("div");
+    driveTabs.className = "drive-tabs";
+    ordered.forEach((ed) => {
+      const b = document.createElement("button");
+      b.className = "btn small" + (ed.localId === ui.selectedEventDriveLocalId ? " active" : "");
+      b.textContent = "Såt " + ed.driveOrder + ": " + ed.driveName;
+      b.onclick = () => {
+        ui.selectedEventDriveLocalId = ed.localId;
+        render();
+      };
+      driveTabs.appendChild(b);
+    });
+    wrap.appendChild(driveTabs);
+
+    const ed = ordered.find((x) => x.localId === ui.selectedEventDriveLocalId);
+    const table = document.createElement("table");
+    table.className = "assign";
+    table.innerHTML =
+      "<thead><tr><th>Post</th><th>Bil</th><th>Jägare</th><th>Resultat</th></tr></thead><tbody></tbody>";
+    const tbody = table.querySelector("tbody");
+
+    assignmentsForDrive(ed.localId).forEach((pa) => {
+      const post = findPost(pa.postNumber, pa.postCode) || { postNumber: pa.postNumber, code: pa.postCode };
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        '<td class="post-label">' + escapeHtml(displayLabel(post)) + "</td>" +
+        '<td class="readonly">' + escapeHtml(pa.car || "—") + "</td>" +
+        '<td><select data-assignee>' + assigneeOptions(pa) + "</select></td>" +
+        "<td><input type=\"text\" data-comment></td>";
+      bindPlainField(tr.querySelector("[data-comment]"), pa, "comment");
+      tr.querySelector("[data-assignee]").onchange = (e) => {
+        const v = e.target.value;
+        if (v === "") {
+          pa.assigneeType = null; pa.hunterUUID = null; pa.role = null;
+        } else if (v.startsWith("role:")) {
+          pa.assigneeType = "role"; pa.role = v.slice(5); pa.hunterUUID = null;
+        } else if (v.startsWith("hunter:")) {
+          pa.assigneeType = "hunter"; pa.hunterUUID = v.slice(7); pa.role = null;
+        }
+      };
+      tbody.appendChild(tr);
+    });
+
+    wrap.appendChild(table);
+    app.innerHTML = "";
+    app.appendChild(wrap);
+  }
+
+  function assigneeOptions(pa) {
+    let html = '<option value=""' + (pa.assigneeType == null ? " selected" : "") + ">Ej tilldelad</option>";
+    html += '<optgroup label="Funktionsroll">';
+    ROLES.forEach((r) => {
+      const sel = pa.assigneeType === "role" && pa.role === r;
+      html += '<option value="role:' + r + '"' + (sel ? " selected" : "") + ">" + r + "</option>";
+    });
+    html += "</optgroup>";
+    html += '<optgroup label="Jägare">';
+    [...state.hunters]
+      .sort((a, b) => a.name.localeCompare(b.name, "sv"))
+      .forEach((h) => {
+        const sel = pa.assigneeType === "hunter" && pa.hunterUUID === h.uuid;
+        html += '<option value="hunter:' + h.uuid + '"' + (sel ? " selected" : "") + ">" + escapeHtml(h.name) + "</option>";
+      });
+    html += "</optgroup>";
+    return html;
+  }
+  // ---- Report tab: printable assignment sheet, grouped by car ----
+
+  function renderReport(app) {
+    const wrap = document.createElement("div");
+
+    const printBtn = document.createElement("button");
+    printBtn.className = "btn primary no-print";
+    printBtn.textContent = "Skriv ut / Spara som PDF";
+    printBtn.style.marginBottom = "14px";
+    printBtn.onclick = () => window.print();
+    wrap.appendChild(printBtn);
+
+    const root = document.createElement("div");
+    root.id = "reportRoot";
+    const title = (state.event.locationName || "") + " — " + (state.event.date || "");
+    root.innerHTML = "<h2>" + escapeHtml(title) + "</h2>";
+
+    const grid = document.createElement("div");
+    grid.className = "report-grid";
+
+    orderedEventDrives().forEach((ed) => {
+      const block = document.createElement("div");
+      block.className = "report-drive";
+      const rally = ed.reassemblyPoint ? " — Återsamling: " + escapeHtml(ed.reassemblyPoint) : "";
+      block.innerHTML = "<h3>Såt " + ed.driveOrder + ": " + escapeHtml(ed.driveName) + rally + "</h3>";
+
+      const groups = new Map();
+      assignmentsForDrive(ed.localId).forEach((pa) => {
+        const key = (pa.car || "").trim();
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(pa);
+      });
+
+      const keys = [...groups.keys()].sort((a, b) => {
+        if (a === "" && b === "") return 0;
+        if (a === "") return 1;
+        if (b === "") return -1;
+        return a.localeCompare(b, "sv", { numeric: true });
+      });
+
+      keys.forEach((key) => {
+        const groupDiv = document.createElement("div");
+        groupDiv.className = "report-group";
+        groupDiv.innerHTML = "<h4>" + (key === "" ? "Utan fordon" : escapeHtml(key)) + "</h4>";
+        groups.get(key).sort(comparePosts).forEach((pa) => {
+          const post = findPost(pa.postNumber, pa.postCode) || { postNumber: pa.postNumber, code: pa.postCode };
+          const row = document.createElement("div");
+          row.className = "report-row";
+          row.innerHTML =
+            '<span class="rp">' + escapeHtml(displayLabel(post)) + "</span>" +
+            '<span class="rn">' + escapeHtml(assigneeName(pa)) + "</span>" +
+            '<span class="rc">' + escapeHtml(pa.comment || "") + "</span>";
+          groupDiv.appendChild(row);
+        });
+        block.appendChild(groupDiv);
+      });
+
+      grid.appendChild(block);
+    });
+
+    root.appendChild(grid);
+    wrap.appendChild(root);
+    app.innerHTML = "";
+    app.appendChild(wrap);
+  }
+
+  // ---------- misc ----------
+
+  function escapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;",
+    }[c]));
+  }
+  function escapeAttr(s) { return escapeHtml(s); }
+
+  function loadSample() {
+    fetch("sample-event.json")
+      .then((r) => r.json())
+      .then(loadPackage)
+      .catch((e) => alert("Kunde inte läsa exempeldata: " + e.message));
+  }
+
+  // ---------- wiring ----------
+
+  document.getElementById("openBtn").onclick = () => document.getElementById("fileInput").click();
+  document.getElementById("fileInput").onchange = (e) => {
+    if (e.target.files[0]) handleFile(e.target.files[0]);
+  };
+  document.getElementById("saveBtn").onclick = exportPackage;
+  document.querySelectorAll("nav.tabs button").forEach((b) => {
+    b.onclick = () => {
+      ui.tab = b.dataset.tab;
+      render();
+    };
+  });
+
+  render();
+})();
+</script>
 </body>
 </html>

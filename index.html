@@ -177,7 +177,8 @@
     flex-wrap: wrap;
   }
   .add-row input { width: 90px; }
-  .add-row .desc { width: 160px; }
+  .add-row .tower-check { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--text); }
+  .add-row .tower-check input { width: auto; }
   .drive-tabs {
     display: flex;
     gap: 6px;
@@ -256,7 +257,7 @@
 
 <nav class="tabs no-print" id="tabs">
   <button data-tab="setup" class="active">Förberedelse</button>
-  <button data-tab="assign">Tilldelning</button>
+  <button data-tab="assign">Passfördelning</button>
   <button data-tab="report">Rapport</button>
 </nav>
 
@@ -469,6 +470,7 @@
       render();
     };
   }
+
   function renderDriveCardSetup(ed, isFirst, isLast) {
     const card = document.createElement("div");
     card.className = "drive-card";
@@ -525,7 +527,7 @@
     addRow.innerHTML =
       '<input class="num" data-num placeholder="Nr">' +
       '<input class="num" data-code placeholder="Kod">' +
-      '<input class="desc" data-typ placeholder="Typ (valfritt)">' +
+      '<label class="tower-check"><input type="checkbox" data-torn> Torn</label>' +
       '<button class="btn small" data-add-post>+ Lägg till post</button>' +
       '<datalist id="carValues">' +
       carValueList().map((c) => '<option value="' + escapeAttr(c) + '">').join("") +
@@ -535,10 +537,10 @@
     addRow.querySelector("[data-add-post]").onclick = () => {
       const num = addRow.querySelector("[data-num]").value.trim();
       const code = addRow.querySelector("[data-code]").value.trim();
-      const typ = addRow.querySelector("[data-typ]").value.trim();
+      const isTower = addRow.querySelector("[data-torn]").checked;
       if (!num) return;
       if (!findPost(num, code)) {
-        state.posts.push({ postNumber: num, code: code || "", type: typ || null, description: null, isRetired: false });
+        state.posts.push({ postNumber: num, code: code || "", type: isTower ? "T" : null, description: null, isRetired: false });
       }
       const existing = assignmentsForDrive(ed.localId);
       if (existing.find((pa) => pa.postNumber === num && (pa.postCode || "") === code)) {
@@ -577,7 +579,7 @@
     render();
   }
 
-  // ---- Assign tab (Tilldelning): per-drive Jägare + Resultat ----
+  // ---- Assign tab (Passfördelning): per-drive Jägare + Resultat ----
 
   function renderAssign(app) {
     const wrap = document.createElement("div");
@@ -660,6 +662,7 @@
     html += "</optgroup>";
     return html;
   }
+
   // ---- Report tab: printable assignment sheet, grouped by car ----
 
   function renderReport(app) {

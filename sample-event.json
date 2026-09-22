@@ -1,0 +1,82 @@
+{
+  "packageVersion": 1,
+  "event": {
+    "date": "2026-10-18",
+    "locationName": "Exempelgården",
+    "huntType": "Klövvilt",
+    "comment": "Exempeldata för att testa webbredigeraren."
+  },
+  "drives": [
+    { "name": "Norra drevet" },
+    { "name": "Södra drevet" }
+  ],
+  "eventDrives": [
+    { "localId": "ed1", "driveName": "Norra drevet", "driveOrder": 1, "reassemblyPoint": "Stora vägen" },
+    { "localId": "ed2", "driveName": "Södra drevet", "driveOrder": 2, "reassemblyPoint": null }
+  ],
+  "posts": [
+    { "postNumber": "1", "code": "T", "type": "T", "description": null, "isRetired": false },
+    { "postNumber": "2", "code": "", "type": null, "description": null, "isRetired": false },
+    { "postNumber": "3", "code": "B", "type": null, "description": null, "isRetired": false },
+    { "postNumber": "4", "code": "", "type": null, "description": null, "isRetired": false }
+  ],
+  "hunters": [
+    { "uuid": "00000000-0000-4000-8000-000000000001", "name": "Test Testsson", "nickname": null },
+    { "uuid": "00000000-0000-4000-8000-000000000002", "name": "Anna Andersson", "nickname": "Anki" },
+    { "uuid": "00000000-0000-4000-8000-000000000003", "name": "Björn Björnsson", "nickname": null }
+  ],
+  "postAssignments": [
+    {
+      "id": "pa1",
+      "eventDriveLocalId": "ed1",
+      "postNumber": "1",
+      "postCode": "T",
+      "assigneeType": "hunter",
+      "hunterUUID": "00000000-0000-4000-8000-000000000001",
+      "role": null,
+      "car": "Buss",
+      "carOrder": null,
+      "comment": null,
+      "sortOrder": 0
+    },
+    {
+      "id": "pa2",
+      "eventDriveLocalId": "ed1",
+      "postNumber": "2",
+      "postCode": "",
+      "assigneeType": "hunter",
+      "hunterUUID": "00000000-0000-4000-8000-000000000002",
+      "role": null,
+      "car": "Buss",
+      "carOrder": null,
+      "comment": null,
+      "sortOrder": 1
+    },
+    {
+      "id": "pa3",
+      "eventDriveLocalId": "ed2",
+      "postNumber": "3",
+      "postCode": "B",
+      "assigneeType": "role",
+      "hunterUUID": null,
+      "role": "Hundförare",
+      "car": null,
+      "carOrder": null,
+      "comment": null,
+      "sortOrder": 0
+    },
+    {
+      "id": "pa4",
+      "eventDriveLocalId": "ed2",
+      "postNumber": "4",
+      "postCode": "",
+      "assigneeType": null,
+      "hunterUUID": null,
+      "role": null,
+      "car": null,
+      "carOrder": null,
+      "comment": null,
+      "sortOrder": 1
+    }
+  ]
+}

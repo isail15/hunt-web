@@ -437,7 +437,7 @@
 
     const driveList = document.createElement("div");
     orderedEventDrives().forEach((ed, idx, arr) => {
-      driveList.appendChild(renderDriveCardSetup(ed, idx === 0, idx === arr.length - 1));
+      driveList.appendChild(renderDriveCardSetup(ed, idx + 1, idx === 0, idx === arr.length - 1));
     });
     wrap.appendChild(driveList);
 
@@ -471,17 +471,17 @@
     };
   }
 
-  function renderDriveCardSetup(ed, isFirst, isLast) {
+  function renderDriveCardSetup(ed, driveNumber, isFirst, isLast) {
     const card = document.createElement("div");
     card.className = "drive-card";
 
     const header = document.createElement("div");
     header.className = "drive-card-header";
     header.innerHTML =
-      '<span class="drive-name">Såt ' + ed.driveOrder + ": " + escapeHtml(ed.driveName) + "</span>" +
-      '<span class="rally">Återsamlingsplats: <input type="text" data-rally></span>' +
       '<button class="btn small" data-up' + (isFirst ? " disabled" : "") + ">↑</button>" +
       '<button class="btn small" data-down' + (isLast ? " disabled" : "") + ">↓</button>" +
+      '<span class="drive-name">Såt ' + driveNumber + ": " + escapeHtml(ed.driveName) + "</span>" +
+      '<span class="rally">Återsamlingsplats: <input type="text" data-rally></span>' +
       '<button class="btn small danger" data-del-drive>Ta bort drev</button>';
     card.appendChild(header);
 
@@ -500,7 +500,7 @@
     const table = document.createElement("table");
     table.className = "assign";
     table.innerHTML =
-      "<thead><tr><th>Post</th><th>Bil</th><th>Ordning</th><th></th></tr></thead><tbody></tbody>";
+      "<thead><tr><th>Post</th><th>Bil</th><th>Ordning i bil</th><th></th></tr></thead><tbody></tbody>";
     const tbody = table.querySelector("tbody");
 
     assignmentsForDrive(ed.localId).forEach((pa) => {
@@ -598,10 +598,10 @@
 
     const driveTabs = document.createElement("div");
     driveTabs.className = "drive-tabs";
-    ordered.forEach((ed) => {
+    ordered.forEach((ed, idx) => {
       const b = document.createElement("button");
       b.className = "btn small" + (ed.localId === ui.selectedEventDriveLocalId ? " active" : "");
-      b.textContent = "Såt " + ed.driveOrder + ": " + ed.driveName;
+      b.textContent = "Såt " + (idx + 1) + ": " + ed.driveName;
       b.onclick = () => {
         ui.selectedEventDriveLocalId = ed.localId;
         render();
@@ -683,11 +683,11 @@
     const grid = document.createElement("div");
     grid.className = "report-grid";
 
-    orderedEventDrives().forEach((ed) => {
+    orderedEventDrives().forEach((ed, idx) => {
       const block = document.createElement("div");
       block.className = "report-drive";
       const rally = ed.reassemblyPoint ? " — Återsamling: " + escapeHtml(ed.reassemblyPoint) : "";
-      block.innerHTML = "<h3>Såt " + ed.driveOrder + ": " + escapeHtml(ed.driveName) + rally + "</h3>";
+      block.innerHTML = "<h3>Såt " + (idx + 1) + ": " + escapeHtml(ed.driveName) + rally + "</h3>";
 
       const groups = new Map();
       assignmentsForDrive(ed.localId).forEach((pa) => {

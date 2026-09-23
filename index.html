@@ -168,6 +168,29 @@
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
+  .post-edit-btn {
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+    background: none;
+    border: none;
+    padding: 0;
+    color: inherit;
+    text-decoration: underline dotted;
+    text-underline-offset: 2px;
+    cursor: pointer;
+  }
+  .post-edit-btn:disabled {
+    text-decoration: none;
+    cursor: default;
+    opacity: 1;
+  }
+  .post-edit-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+  }
+  .post-edit-inline input.num { width: 46px; }
   .add-row {
     display: flex;
     gap: 6px;
@@ -278,7 +301,11 @@
 
   /** @type {any} */
   let state = null;
-  let ui = { tab: "setup", selectedEventDriveLocalId: null };
+  // editingPost: the exact Post object (a reference into state.posts, from
+  // findPost — never a copy) currently shown as inline edit fields in the
+  // Förberedelse tab, or null. Compared by identity (===), which stays  // valid across a rename since editing only mutates the object's fields,
+  // never replaces it.
+  let ui = { tab: "setup", selectedEventDriveLocalId: null, editingPost: null };
 
   // ---------- helpers ----------
 
@@ -335,6 +362,12 @@
     return "Ej tilldelad";
   }
 
+  // driveOrder is only ever a relative sort key, never a display-ready
+  // number — the native app's own driveOrder is 0-indexed (its first
+  // drive is 0, not 1), so a real export can and does contain 0. Never
+  // show ed.driveOrder directly; the "Såt N" labels always come from a
+  // drive's 1-based position in this sorted list instead (see
+  // renderDriveCardSetup, renderAssign's driveTabs, renderReport).
   function orderedEventDrives() {
     return [...state.eventDrives].sort((a, b) => a.driveOrder - b.driveOrder);
   }
@@ -355,7 +388,7 @@
       return;
     }
     state = pkg;
-    ui = { tab: "setup", selectedEventDriveLocalId: null };
+    ui = { tab: "setup", selectedEventDriveLocalId: null, editingPost: null };
     document.getElementById("saveBtn").disabled = false;
     render();
   }
@@ -471,6 +504,77 @@
     };
   }
 
+  // Inline edit fields for one catalog Post (Nr/Kod/Torn), shown in place
+  // of its label when ui.editingPost === post. Post is catalog data
+  // shared across every drive/event that uses it (see SCHEMA.md), so a
+  // rename here has to update every PostAssignment that referenced the  // old postNumber+code — not just the row that was clicked — or those
+  // other assignments would silently stop matching any post at all.
+  function renderPostEditFields(post) {
+    const wrap = document.createElement("span");
+    wrap.className = "post-edit-inline";
+    wrap.innerHTML =
+      '<input class="num" data-num style="width:46px">' +
+      '<input class="num" data-code style="width:46px">' +
+      '<label class="tower-check"><input type="checkbox" data-torn> Torn</label>' +
+      '<button class="btn small" data-done>Klart</button>';
+
+    const numInput = wrap.querySelector("[data-num]");
+    const codeInput = wrap.querySelector("[data-code]");
+    const tornInput = wrap.querySelector("[data-torn]");
+    numInput.value = post.postNumber;
+    codeInput.value = post.code || "";
+    tornInput.checked = post.type === "T";
+
+    function applyRename() {
+      const newNum = numInput.value.trim();
+      const newCode = codeInput.value.trim();
+      const oldNum = post.postNumber;
+      const oldCode = post.code || "";
+      if (newNum === oldNum && newCode === oldCode) return;
+      if (!newNum) {
+        alert("Postnummer krävs.");
+        numInput.value = oldNum;
+        return;
+      }
+      const conflict = state.posts.find(
+        (p) => p !== post && p.postNumber === newNum && (p.code || "") === newCode
+      );
+      if (conflict) {
+        alert("Post " + newNum + newCode + " finns redan.");
+        numInput.value = oldNum;
+        codeInput.value = oldCode;
+        return;
+      }
+      state.postAssignments.forEach((pa) => {
+        if (pa.postNumber === oldNum && (pa.postCode || "") === oldCode) {
+          pa.postNumber = newNum;
+          pa.postCode = newCode;
+        }
+      });
+      post.postNumber = newNum;
+      post.code = newCode;
+    }
+
+    numInput.onchange = () => {
+      applyRename();
+      render();
+    };
+    codeInput.onchange = () => {
+      applyRename();
+      render();
+    };
+    tornInput.onchange = () => {
+      post.type = tornInput.checked ? "T" : null;
+      render();
+    };
+    wrap.querySelector("[data-done]").onclick = () => {
+      ui.editingPost = null;
+      render();
+    };
+
+    return wrap;
+  }
+
   function renderDriveCardSetup(ed, driveNumber, isFirst, isLast) {
     const card = document.createElement("div");
     card.className = "drive-card";
@@ -505,12 +609,35 @@
 
     assignmentsForDrive(ed.localId).forEach((pa) => {
       const tr = document.createElement("tr");
-      const post = findPost(pa.postNumber, pa.postCode) || { postNumber: pa.postNumber, code: pa.postCode };
+      // post is the real catalog object (a reference into state.posts) so
+      // it can be edited in place; the fallback (no match found — should
+      // not happen in practice) is a throwaway shape, not editable.
+      const post = findPost(pa.postNumber, pa.postCode);
+      const fallbackPost = post || { postNumber: pa.postNumber, code: pa.postCode };
       tr.innerHTML =
-        '<td class="post-label">' + escapeHtml(displayLabel(post)) + "</td>" +
+        '<td class="post-label" data-post-cell></td>' +
         '<td><input list="carValues" data-car></td>' +
         '<td><input type="number" step="0.1" data-order style="width:70px"></td>' +
         '<td><button class="btn small danger" data-del>Ta bort</button></td>';
+
+      const postCell = tr.querySelector("[data-post-cell]");
+      if (post && ui.editingPost === post) {
+        postCell.appendChild(renderPostEditFields(post));
+      } else {
+        const label = document.createElement(post ? "button" : "span");
+        label.className = "post-edit-btn";
+        label.textContent = displayLabel(fallbackPost);
+        if (post) {
+          label.type = "button";
+          label.title = "Klicka för att redigera posten";
+          label.onclick = () => {
+            ui.editingPost = post;
+            render();
+          };
+        }
+        postCell.appendChild(label);
+      }
+
       bindPlainField(tr.querySelector("[data-car]"), pa, "car");
       bindPlainField(tr.querySelector("[data-order]"), pa, "carOrder", (v) => (v === null ? null : parseFloat(v)));
       tr.querySelector("[data-del]").onclick = () => {
@@ -567,8 +694,7 @@
     return card;
   }
 
-  function moveDrive(ed, dir) {
-    const ordered = orderedEventDrives();
+  function moveDrive(ed, dir) {    const ordered = orderedEventDrives();
     const idx = ordered.findIndex((x) => x.localId === ed.localId);
     const swapIdx = idx + dir;
     if (swapIdx < 0 || swapIdx >= ordered.length) return;
@@ -755,6 +881,7 @@
   document.querySelectorAll("nav.tabs button").forEach((b) => {
     b.onclick = () => {
       ui.tab = b.dataset.tab;
+      ui.editingPost = null;
       render();
     };
   });

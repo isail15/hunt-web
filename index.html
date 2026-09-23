@@ -583,6 +583,11 @@
       obj[key] = parse ? parse(v) : v;
       document.getElementById("eventSummary").textContent =
         (state.event.locationName || "Okänd plats") + " — " + (state.event.date || "");
+      // This handler updates state directly without calling render() (typing
+      // in a car/comment/date field shouldn't re-render the whole tab on
+      // every keystroke), so it has to schedule the autosave itself —
+      // render() alone would miss every edit made through this function.
+      scheduleAutosave();
     };
   }
 
@@ -606,6 +611,7 @@
       driveList.appendChild(renderDriveCardSetup(ed, idx + 1, idx === 0, idx === arr.length - 1));
     });
     wrap.appendChild(driveList);
+
     const addDriveRow = document.createElement("div");
     addDriveRow.className = "add-row";
     addDriveRow.style.borderRadius = "8px";

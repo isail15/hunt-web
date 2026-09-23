@@ -39,6 +39,13 @@ project).
   // Mirrors EventDrive — which Drives run this Event, and in what order.
   // "localId" only exists inside this file, to link postAssignments to
   // their drive; it is not a native model field.
+  //
+  // driveOrder is a relative sort key only — never a display-ready
+  // number, and never assumed to start at 1. The native app's own
+  // driveOrder is 0-indexed (its first drive is 0), so a real export's
+  // eventDrives commonly starts at 0, not 1, unlike the example below.
+  // Both apps compute the shown "Såt N" label from a drive's position
+  // after sorting by driveOrder, not from driveOrder's own value.
   "eventDrives": [
     { "localId": "ed1", "driveName": "Kräpplan", "driveOrder": 1, "reassemblyPoint": "Stora vägen" },
     { "localId": "ed2", "driveName": "Runnebo",  "driveOrder": 2, "reassemblyPoint": null }

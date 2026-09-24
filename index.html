@@ -295,6 +295,7 @@
   <input type="file" id="fileInput" accept="application/json">
   <button class="btn" id="openBtn">Öppna fil…</button>
   <button class="btn" id="shareLinkBtn" disabled>Dela länk…</button>
+  <button class="btn" id="sendBackBtn" disabled>Skicka tillbaka…</button>
   <button class="btn primary" id="saveBtn" disabled>Spara ändringar…</button>
   <div class="share-box" id="shareBox">
     <input type="text" id="shareLinkInput" readonly>
@@ -417,6 +418,7 @@
     ui = { tab: "setup", selectedEventDriveLocalId: null, editingPost: null };
     document.getElementById("saveBtn").disabled = false;
     document.getElementById("shareLinkBtn").disabled = false;
+    document.getElementById("sendBackBtn").disabled = false;
     render();
   }
 
@@ -480,6 +482,21 @@
   function shareLinkUrl(encoded) {
     return location.origin + location.pathname + "#d=" + encoded;
   }
+
+  // ---------- send back (a remote editor's way to commit their changes) ----------
+  //
+  // Whoever's editing — usually not Fredrik — needs a way to get their
+  // changes back that doesn't depend on them remembering to attach a
+  // downloaded file to a message. "Skicka tillbaka…" reuses the exact same
+  // link encoding as "Dela länk…", then hands that link to the editor's own
+  // email app, pre-addressed and pre-filled, via a mailto: URL — so the only
+  // manual step left is hitting send in a compose window that's already
+  // written for them. If their browser has no mail app configured, mailto:
+  // silently does nothing, which is why the same copyable/selected link box
+  // "Dela länk…" already shows is always shown here too: worst case, they
+  // copy it and send it however they normally would have sent the original
+  // link back (email, text, whatever channel it arrived on).
+  const OWNER_EMAIL = "fredrik@bergvik.org";
 
   // ---------- autosave: resume where you left off, on this same device ----------
   //
@@ -1056,6 +1073,39 @@
       btn.disabled = false;
     }
   };
+
+  document.getElementById("sendBackBtn").onclick = async () => {
+    const btn = document.getElementById("sendBackBtn");
+    const box = document.getElementById("shareBox");
+    const input = document.getElementById("shareLinkInput");
+    const status = document.getElementById("shareLinkStatus");
+    btn.disabled = true;
+    status.textContent = "";
+    try {
+      const encoded = await encodeStateForLink(state);
+      const url = shareLinkUrl(encoded);
+      // Show the link box first (same as "Dela länk…") so it's already
+      // there as a fallback before handing off to the mail app below.
+      input.value = url;
+      box.classList.add("visible");
+      input.focus();
+      input.select();
+      const subject = "Uppdaterad jaktdag: " +
+        (state.event.locationName || "Okänd plats") + " — " + (state.event.date || "");
+      const body =
+        "Här är länken med mina ändringar:\n\n" + url + "\n";
+      window.location.href =
+        "mailto:" + encodeURIComponent(OWNER_EMAIL) +
+        "?subject=" + encodeURIComponent(subject) +
+        "&body=" + encodeURIComponent(body);
+      status.textContent = "E-post öppnad — skicka den. Inget hände? Länken är markerad ovan, kopiera med Ctrl/Cmd+C.";
+    } catch (e) {
+      alert("Kunde inte skapa länken: " + e.message);
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
   document.getElementById("closeShareLinkBtn").onclick = () => {
     document.getElementById("shareBox").classList.remove("visible");
   };

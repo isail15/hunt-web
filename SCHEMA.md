@@ -60,27 +60,40 @@ project).
     { "postNumber": "6",  "code": "B", "type": null, "description": null, "isRetired": false }
   ],
 
-  // The Hunter roster available to assign from (attendees plus enough of
-  // the wider pool that someone new can be added on the day). Matched by
-  // uuid — HuntingJournal's stable id, carried through unchanged. This web
-  // editor never invents a new Hunter; picking a person always means
-  // picking one already in this list.
+  // The full Hunter catalog (the wider pool, not just today's attendees) —
+  // this is what a person is matched against by uuid whenever one is
+  // picked. Matched by uuid — HuntingJournal's stable id, carried through
+  // unchanged.
   "hunters": [
     { "uuid": "6b1f2e2a-0000-4000-8000-000000000001", "name": "Erik Andersson", "nickname": null }
   ],
 
-  // Mirrors PostAssignment. Exactly one of hunterUUID / role should be set,
-  // matching the native rule that a slot is either a real Hunter or one of
-  // the two fixed FunctionalRole values, never both.
+  // Which of the hunters above are actually attending *this* event — a
+  // plain array of Hunter uuids, mirroring the native EventAttendee join.
+  // This is what narrows the Jägare picker in the web editor's
+  // Passfördelning tab down to a short, relevant list instead of the
+  // entire catalog. Missing on an older/native export that doesn't have
+  // this concept yet → the web editor treats that as "everyone attends"
+  // (falls back to every uuid in `hunters`) rather than showing an empty
+  // list, then lets the person narrow it down themselves.
+  "eventAttendees": [
+    "6b1f2e2a-0000-4000-8000-000000000001"
+  ],
+
+  // Mirrors PostAssignment. Exactly one of hunterUUID / role / freeformName
+  // should be set, matching the native rule that a slot is either a real
+  // Hunter, one of the two fixed FunctionalRole values, or (web-editor-only,
+  // see below) a typed-in name — never more than one of the three.
   "postAssignments": [
     {
       "id": "pa1",                  // local id, this file only
       "eventDriveLocalId": "ed1",
       "postNumber": "18",
       "postCode": "T",
-      "assigneeType": "hunter",      // "hunter" | "role" | null (unassigned)
+      "assigneeType": "hunter",      // "hunter" | "role" | "freeform" | null (unassigned)
       "hunterUUID": "6b1f2e2a-0000-4000-8000-000000000001",
       "role": null,                  // "Hundförare" | "Utställare" when assigneeType is "role"
+      "freeformName": null,          // typed name when assigneeType is "freeform" (see below)
       "car": "Buss",                 // PostAssignment.car, free text
       "carOrder": null,              // PostAssignment.carOrder — carried through, not yet used by this editor's report (matches native: report ignores carOrder today too)
       "comment": null,               // PostAssignment.comment — the result
@@ -104,7 +117,14 @@ project).
 - **Hunter is never created from this file** — only matched by uuid against
   HuntingJournal's roster, consistent with `huntingjournal-integration.md`
   (HuntingJournal owns people; HuntManagement/this editor only reference
-  them).
+  them). The one deliberate exception is `assigneeType: "freeform"`: when
+  the person editing needs to assign someone who isn't in `hunters` at all
+  (a genuinely new hunter, or one who just wasn't included in this
+  particular export), they can type a plain name straight onto the post
+  instead of being stuck. That name round-trips as free text, not a real
+  Hunter — importing it back into HuntManagement still needs a manual step
+  to turn it into an actual Hunter record (or match it to an existing one)
+  before it becomes a normal `hunterUUID` assignment.
 - **Native-side export/import isn't built yet.** This schema is designed so
   that work is mostly plumbing (Codable structs mirroring the case above)
   when it happens — see `sharing-and-platform-strategy.md`.

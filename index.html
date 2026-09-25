@@ -231,6 +231,41 @@
   .readonly {
     color: var(--muted);
   }
+  .attendee-box {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-alt);
+    padding: 10px 12px;
+    margin-bottom: 16px;
+  }
+  .attendee-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 13px;
+  }
+  .attendee-filter {
+    width: 100%;
+    margin: 8px 0;
+  }
+  .attendee-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 4px 10px;
+    max-height: 220px;
+    overflow-y: auto;
+    padding-top: 4px;
+  }
+  .attendee-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .attendee-row input { width: auto; }
+  table.assign [data-freeform] { margin-top: 4px; }
   #fileInput { display: none; }
   .hint {
     font-size: 12px;
@@ -332,7 +367,13 @@
   // Förberedelse tab, or null. Compared by identity (===), which stays
   // valid across a rename since editing only mutates the object's fields,
   // never replaces it.
-  let ui = { tab: "setup", selectedEventDriveLocalId: null, editingPost: null };
+  let ui = {
+    tab: "setup",
+    selectedEventDriveLocalId: null,
+    editingPost: null,
+    attendeeBoxOpen: false,
+    attendeeFilter: "",
+  };
 
   // ---------- helpers ----------
 
@@ -386,6 +427,12 @@
       return h ? h.name : "Okänd jägare";
     }
     if (pa.assigneeType === "role" && pa.role) return pa.role;
+    if (pa.assigneeType === "freeform" && pa.freeformName) {
+      // Typed on the spot, not matched to any Hunter uuid — flagged so
+      // whoever reviews this later (Fredrik, in the native app) notices
+      // it still needs to be reconciled with a real Hunter record.
+      return pa.freeformName + " (ny, ej i systemet)";
+    }
     return "Ej tilldelad";
   }
 
@@ -415,7 +462,20 @@
       return;
     }
     state = pkg;
-    ui = { tab: "setup", selectedEventDriveLocalId: null, editingPost: null };
+    // Older exports (and anything from before this field existed) have no
+    // eventAttendees at all — default to "everyone in the roster attends"
+    // so nothing that used to show up in the assignee dropdown silently
+    // disappears; Fredrik can then narrow it down from the Deltagare box.
+    if (!Array.isArray(state.eventAttendees)) {
+      state.eventAttendees = state.hunters.map((h) => h.uuid);
+    }
+    ui = {
+      tab: "setup",
+      selectedEventDriveLocalId: null,
+      editingPost: null,
+      attendeeBoxOpen: false,
+      attendeeFilter: "",
+    };
     document.getElementById("saveBtn").disabled = false;
     document.getElementById("shareLinkBtn").disabled = false;
     document.getElementById("sendBackBtn").disabled = false;
@@ -868,8 +928,13 @@
     const wrap = document.createElement("div");
     const ordered = orderedEventDrives();
 
+    wrap.appendChild(renderAttendeesBox());
+
     if (ordered.length === 0) {
-      wrap.innerHTML = '<div class="empty-state">Inga drev inlagda ännu. Lägg till drev under Förberedelse.</div>';
+      const empty = document.createElement("div");
+      empty.className = "empty-state";
+      empty.textContent = "Inga drev inlagda ännu. Lägg till drev under Förberedelse.";
+      wrap.appendChild(empty);
       app.innerHTML = "";
       app.appendChild(wrap);
       return;
@@ -903,21 +968,35 @@
     assignmentsForDrive(ed.localId).forEach((pa) => {
       const post = findPost(pa.postNumber, pa.postCode) || { postNumber: pa.postNumber, code: pa.postCode };
       const tr = document.createElement("tr");
+      const freeformVisible = pa.assigneeType === "freeform";
       tr.innerHTML =
         '<td class="post-label">' + escapeHtml(displayLabel(post)) + "</td>" +
         '<td class="readonly">' + escapeHtml(pa.car || "—") + "</td>" +
-        '<td><select data-assignee>' + assigneeOptions(pa) + "</select></td>" +
+        '<td>' +
+          '<select data-assignee>' + assigneeOptions(pa) + "</select>" +
+          '<input type="text" data-freeform placeholder="Namn på jägaren"' +
+            (freeformVisible ? "" : ' style="display:none"') + ">" +
+        "</td>" +
         "<td><input type=\"text\" data-comment></td>";
       bindPlainField(tr.querySelector("[data-comment]"), pa, "comment");
+      bindPlainField(tr.querySelector("[data-freeform]"), pa, "freeformName");
       tr.querySelector("[data-assignee]").onchange = (e) => {
         const v = e.target.value;
         if (v === "") {
-          pa.assigneeType = null; pa.hunterUUID = null; pa.role = null;
+          pa.assigneeType = null; pa.hunterUUID = null; pa.role = null; pa.freeformName = null;
+        } else if (v === "freeform") {
+          pa.assigneeType = "freeform"; pa.hunterUUID = null; pa.role = null;
         } else if (v.startsWith("role:")) {
-          pa.assigneeType = "role"; pa.role = v.slice(5); pa.hunterUUID = null;
+          pa.assigneeType = "role"; pa.role = v.slice(5); pa.hunterUUID = null; pa.freeformName = null;
         } else if (v.startsWith("hunter:")) {
-          pa.assigneeType = "hunter"; pa.hunterUUID = v.slice(7); pa.role = null;
+          pa.assigneeType = "hunter"; pa.hunterUUID = v.slice(7); pa.role = null; pa.freeformName = null;
         }
+        // Only the freeform text field's visibility depends on this
+        // choice, so a full render() (which would rebuild every row and
+        // drop focus) isn't needed — just toggle it in place.
+        tr.querySelector("[data-freeform]").style.display = pa.assigneeType === "freeform" ? "" : "none";
+        if (pa.assigneeType === "freeform") tr.querySelector("[data-freeform]").focus();
+        scheduleAutosave();
       };
       tbody.appendChild(tr);
     });
@@ -936,14 +1015,110 @@
     });
     html += "</optgroup>";
     html += '<optgroup label="Jägare">';
+    // Only today's attendees (see the Deltagare box) show up here — not
+    // the whole Hunter catalog — so this list stays short and relevant.
+    // A hunter already assigned here is always kept, even if they've
+    // since been unchecked as an attendee, so an existing assignment
+    // never silently loses its label.
+    const attendeeSet = new Set(state.eventAttendees || []);
     [...state.hunters]
+      .filter((h) => attendeeSet.has(h.uuid) || (pa.assigneeType === "hunter" && pa.hunterUUID === h.uuid))
       .sort((a, b) => a.name.localeCompare(b.name, "sv"))
       .forEach((h) => {
         const sel = pa.assigneeType === "hunter" && pa.hunterUUID === h.uuid;
-        html += '<option value="hunter:' + h.uuid + '"' + (sel ? " selected" : "") + ">" + escapeHtml(h.name) + "</option>";
+        const notAttending = !attendeeSet.has(h.uuid);
+        html += '<option value="hunter:' + h.uuid + '"' + (sel ? " selected" : "") + ">" +
+          escapeHtml(h.name) + (notAttending ? " (ej anmäld)" : "") + "</option>";
       });
     html += "</optgroup>";
+    html += '<option value="freeform"' + (pa.assigneeType === "freeform" ? " selected" : "") +
+      ">✎ Skriv in namn…</option>";
     return html;
+  }
+
+  // ---- Deltagare (attendees): narrows the Jägare list above to just the
+  // hunters actually at this hunt, instead of the whole catalog. Backed by
+  // state.eventAttendees (a plain array of Hunter uuids) so it round-trips
+  // through the JSON like everything else. Toggling a checkbox re-renders
+  // (cheap, and needed so the assignee dropdowns above pick up the change
+  // right away); the filter box instead just shows/hides already-built
+  // rows in place, so typing into it doesn't lose focus on every keystroke.
+  function renderAttendeesBox() {
+    const box = document.createElement("div");
+    box.className = "attendee-box";
+
+    const attendeeSet = new Set(state.eventAttendees || []);
+    const header = document.createElement("div");
+    header.className = "attendee-header";
+    const countLabel = document.createElement("strong");
+    countLabel.textContent = "Deltagare: " + attendeeSet.size + " av " + state.hunters.length;
+    const toggleBtn = document.createElement("button");
+    toggleBtn.className = "btn small";
+    toggleBtn.textContent = ui.attendeeBoxOpen ? "Dölj deltagarlista" : "Visa/redigera deltagare";
+    toggleBtn.onclick = () => {
+      ui.attendeeBoxOpen = !ui.attendeeBoxOpen;
+      render();
+    };
+    header.appendChild(countLabel);
+    header.appendChild(toggleBtn);
+    box.appendChild(header);
+
+    if (ui.attendeeBoxOpen) {
+      const hint = document.createElement("div");
+      hint.className = "hint";
+      hint.style.margin = "8px 0";
+      hint.textContent =
+        "Kryssa i vilka jägare som är med på den här jaktdagen — bara de visas sen i Jägare-listan under Passfördelning. " +
+        "Saknas någon helt? Skriv in namnet direkt på posten istället (\"✎ Skriv in namn…\" i Jägare-listan).";
+      box.appendChild(hint);
+
+      const filterInput = document.createElement("input");
+      filterInput.type = "text";
+      filterInput.className = "attendee-filter";
+      filterInput.placeholder = "Filtrera namn…";
+      filterInput.value = ui.attendeeFilter || "";
+      box.appendChild(filterInput);
+
+      const list = document.createElement("div");
+      list.className = "attendee-list";
+
+      function applyFilter() {
+        const f = filterInput.value.trim().toLowerCase();
+        list.querySelectorAll(".attendee-row").forEach((row) => {
+          row.style.display = row.dataset.name.indexOf(f) === -1 ? "none" : "";
+        });
+      }
+
+      [...state.hunters]
+        .sort((a, b) => a.name.localeCompare(b.name, "sv"))
+        .forEach((h) => {
+          const row = document.createElement("label");
+          row.className = "attendee-row";
+          row.dataset.name = h.name.toLowerCase();
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.checked = attendeeSet.has(h.uuid);
+          cb.onchange = () => {
+            const set = new Set(state.eventAttendees || []);
+            if (cb.checked) set.add(h.uuid); else set.delete(h.uuid);
+            state.eventAttendees = [...set];
+            render();
+          };
+          row.appendChild(cb);
+          row.appendChild(document.createTextNode(" " + h.name));
+          list.appendChild(row);
+        });
+
+      box.appendChild(list);
+      applyFilter();
+
+      filterInput.oninput = () => {
+        ui.attendeeFilter = filterInput.value;
+        applyFilter();
+      };
+    }
+
+    return box;
   }
 
   // ---- Report tab: printable assignment sheet, grouped by car ----

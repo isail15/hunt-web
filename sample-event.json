@@ -25,6 +25,10 @@
     { "uuid": "00000000-0000-4000-8000-000000000002", "name": "Anna Andersson", "nickname": "Anki" },
     { "uuid": "00000000-0000-4000-8000-000000000003", "name": "Björn Björnsson", "nickname": null }
   ],
+  "eventAttendees": [
+    "00000000-0000-4000-8000-000000000001",
+    "00000000-0000-4000-8000-000000000002"
+  ],
   "postAssignments": [
     {
       "id": "pa1",

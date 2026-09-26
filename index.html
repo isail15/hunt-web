@@ -280,8 +280,15 @@
     padding: 12px;
   }
   #reportRoot h2 {
-    font-size: 16px;
-    margin: 0 0 10px;
+    font-size: 21px;
+    margin: 0 0 8px;
+    text-align: center;
+  }
+  #reportRoot .report-title-rule {
+    width: 75%;
+    margin: 0 auto 14px;
+    border: none;
+    border-top: 1px solid #bbb;
   }
   .report-grid {
     display: grid;
@@ -1135,8 +1142,13 @@
 
     const root = document.createElement("div");
     root.id = "reportRoot";
-    const title = (state.event.locationName || "") + " — " + (state.event.date || "");
-    root.innerHTML = "<h2>" + escapeHtml(title) + "</h2>";
+    // "HuntType, Location — date" — huntType is omitted entirely when unset
+    // rather than leaving a stray ", " in front of the location.
+    const titleParts = [];
+    if (state.event.huntType) titleParts.push(state.event.huntType);
+    titleParts.push(state.event.locationName || "");
+    const title = titleParts.join(", ") + " — " + (state.event.date || "");
+    root.innerHTML = "<h2>" + escapeHtml(title) + "</h2><hr class=\"report-title-rule\">";
 
     const grid = document.createElement("div");
     grid.className = "report-grid";

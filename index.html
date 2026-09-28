@@ -153,6 +153,15 @@
     font-size: 14px;
     min-width: 140px;
   }
+  .drive-card-header .pass-count {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .car-order-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    padding: 6px 12px 0;
+  }
   .drive-card-header .rally {
     flex: 1;
     min-width: 180px;
@@ -422,6 +431,34 @@
     return state.postAssignments
       .filter((pa) => pa.eventDriveLocalId === localId)
       .sort((a, b) => a.sortOrder - b.sortOrder);
+  }
+
+  // "Sortera om bilordning" (Förberedelse tab): renumbers carOrder to a
+  // clean 1, 2, 3… per car, using whatever order is currently there
+  // (missing values sort last, ties broken by the table's own row order)
+  // as the starting point — a cleanup step after manually inserting
+  // someone with a fractional value like 1.5, not a way to choose the
+  // order itself. Assignments with no car set are left untouched, since
+  // "Ordning i bil" has no meaning without a car.
+  function resortCarOrder(localId) {
+    const byCar = new Map();
+    assignmentsForDrive(localId).forEach((pa) => {
+      const key = (pa.car || "").trim();
+      if (!key) return;
+      if (!byCar.has(key)) byCar.set(key, []);
+      byCar.get(key).push(pa);
+    });
+    byCar.forEach((list) => {
+      list.sort((a, b) => {
+        const oa = a.carOrder == null ? Infinity : a.carOrder;
+        const ob = b.carOrder == null ? Infinity : b.carOrder;
+        if (oa !== ob) return oa - ob;
+        return a.sortOrder - b.sortOrder;
+      });
+      list.forEach((pa, idx) => {
+        pa.carOrder = idx + 1;
+      });
+    });
   }
 
   function hunterByUUID(u) {
@@ -832,10 +869,16 @@
 
     const header = document.createElement("div");
     header.className = "drive-card-header";
+    // Pass count: how many PostAssignments ("pass" — see the Passfördelning
+    // tab's own naming) this drive has, not how many catalog Posts exist —
+    // shown here so it's visible while building out the drive, before any
+    // hunter is assigned to a single one of them.
+    const passCount = assignmentsForDrive(ed.localId).length;
     header.innerHTML =
       '<button class="btn small" data-up' + (isFirst ? " disabled" : "") + ">↑</button>" +
       '<button class="btn small" data-down' + (isLast ? " disabled" : "") + ">↓</button>" +
       '<span class="drive-name">Såt ' + driveNumber + ": " + escapeHtml(ed.driveName) + "</span>" +
+      '<span class="pass-count">Pass (' + passCount + ')</span>' +
       '<span class="rally">Återsamlingsplats: <input type="text" data-rally></span>' +
       '<button class="btn small danger" data-del-drive>Ta bort drev</button>';
     card.appendChild(header);
@@ -851,6 +894,15 @@
       state.postAssignments = state.postAssignments.filter((pa) => pa.eventDriveLocalId !== ed.localId);
       render();
     };
+
+    const orderToolbar = document.createElement("div");
+    orderToolbar.className = "car-order-toolbar";
+    orderToolbar.innerHTML = '<button class="btn small" data-resort-order>Sortera om bilordning</button>';
+    orderToolbar.querySelector("[data-resort-order]").onclick = () => {
+      resortCarOrder(ed.localId);
+      render();
+    };
+    card.appendChild(orderToolbar);
 
     const table = document.createElement("table");
     table.className = "assign";
@@ -868,7 +920,13 @@
       tr.innerHTML =
         '<td class="post-label" data-post-cell></td>' +
         '<td><input list="carValues" data-car></td>' +
-        '<td><input type="number" step="0.1" data-order style="width:70px"></td>' +
+        // Plain text, not type="number" — a number input's spin arrows nudge
+        // by a fixed step (0.1 here), which is fiddly for entering a specific
+        // car-boarding position. Select-all-on-focus means clicking or
+        // tabbing in lets you just type over the old value; typing a messy
+        // decimal (e.g. to insert between 1 and 2) is fine since "Sortera om
+        // bilordning" (resortCarOrder, above) cleans these up afterward.
+        '<td><input type="text" inputmode="decimal" data-order style="width:70px" onfocus="this.select()"></td>' +
         '<td><button class="btn small danger" data-del>Ta bort</button></td>';
 
       const postCell = tr.querySelector("[data-post-cell]");

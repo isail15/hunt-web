@@ -156,6 +156,8 @@
   .drive-card-header .pass-count {
     font-size: 12px;
     color: var(--muted);
+    margin-right: -6px;
+    white-space: nowrap;
   }
   .car-order-toolbar {
     display: flex;
@@ -878,7 +880,7 @@
       '<button class="btn small" data-up' + (isFirst ? " disabled" : "") + ">↑</button>" +
       '<button class="btn small" data-down' + (isLast ? " disabled" : "") + ">↓</button>" +
       '<span class="drive-name">Såt ' + driveNumber + ": " + escapeHtml(ed.driveName) + "</span>" +
-      '<span class="pass-count">Pass (' + passCount + ')</span>' +
+      '<span class="pass-count">' + passCount + " pass,</span>" +
       '<span class="rally">Återsamlingsplats: <input type="text" data-rally></span>' +
       '<button class="btn small danger" data-del-drive>Ta bort drev</button>';
     card.appendChild(header);
@@ -907,7 +909,7 @@
     const table = document.createElement("table");
     table.className = "assign";
     table.innerHTML =
-      "<thead><tr><th>Post</th><th>Bil</th><th>Ordning i bil</th><th></th></tr></thead><tbody></tbody>";
+      "<thead><tr><th>Pass</th><th>Bil</th><th>Ordning i bil</th><th></th></tr></thead><tbody></tbody>";
     const tbody = table.querySelector("tbody");
 
     assignmentsForDrive(ed.localId).forEach((pa) => {
@@ -1055,7 +1057,7 @@
     const table = document.createElement("table");
     table.className = "assign";
     table.innerHTML =
-      "<thead><tr><th>Post</th><th>Bil</th><th>Jägare</th><th>Resultat</th></tr></thead><tbody></tbody>";
+      "<thead><tr><th>Pass</th><th>Bil</th><th>Jägare</th><th>Resultat</th></tr></thead><tbody></tbody>";
     const tbody = table.querySelector("tbody");
 
     assignmentsForDrive(ed.localId).forEach((pa) => {

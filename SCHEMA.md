@@ -4,23 +4,28 @@ This is the file format exchanged between HuntManagement (the native app) and
 this web editor. It describes exactly one `Event` (a single hunt day) and
 everything needed to edit its Drives, Posts, Car/Hunter assignments, and
 print the assignment report — matching the native app's own SwiftData model
-field-for-field so a future native export/import can serialize this directly.
+field-for-field so the native export/import serializes this directly.
 
-There is no server and no sync: HuntManagement exports this file, someone
-edits it here and downloads an updated copy, and it gets imported back into
-HuntManagement by hand. Only one person should be editing a given copy at a
-time (see `sharing-and-platform-strategy.md`, Finding 3, in the HuntManagement
-project).
+There is no sync. The package travels one of two ways: through the **drop
+box** (a tiny versioned store, see "Drop box API" below — the normal path
+from 2026-09-29), or as a file / old-style `#d=` link that is imported by
+hand (the fallback for a day with no signal). Either way an import is a full
+replace of that Event's drives and assignments, and the drop box's version
+check is what stops two editors from silently overwriting each other (see
+`hunt-drop-box-plan.md` in the HuntManagement project).
 
 ```jsonc
 {
   "packageVersion": 1,
 
-  // Mirrors Event. No "id" yet because Event has no stable uuid in the
-  // native model today (unlike Hunter/Location) — the native side will need
-  // one added before real round-trip import can match this back to the same
-  // Event record rather than creating a new one. Not a blocker for building
-  // and testing this web editor itself.
+  // Event.uuid. REQUIRED by the native importer (HuntPackageHandoff decodes
+  // it as a non-optional UUID): import matches the existing Event by this
+  // value and only creates a new Event when no Event has it. Swift encodes
+  // UUIDs as uppercase strings. The web editor never reads or changes it —
+  // it just carries it through, since it keeps every field it was given.
+  "eventUUID": "3F2B6C1E-8A4D-4E7B-9C21-5D6E7F8A9B0C",
+
+  // Mirrors Event.
   "event": {
     "date": "2026-10-18",           // Event.date, ISO 8601 date
     "locationName": "Ånnebo",       // Event.location?.name
@@ -125,6 +130,120 @@ project).
   Hunter — importing it back into HuntManagement still needs a manual step
   to turn it into an actual Hunter record (or match it to an existing one)
   before it becomes a normal `hunterUUID` assignment.
-- **Native-side export/import isn't built yet.** This schema is designed so
-  that work is mostly plumbing (Codable structs mirroring the case above)
-  when it happens — see `sharing-and-platform-strategy.md`.
+- **Native export/import exists**: `Models/HuntPackageHandoff.swift` in
+  HuntManagement (`export` / `run`), with Codable DTOs mirroring the example
+  above. Since 2026-09-29 its export includes `eventAttendees`, so real hunts
+  narrow the Jägare list as intended.
+- **Unknown fields survive the web editor.** It edits the loaded object in
+  place and writes the whole thing back, so a field it doesn't know about
+  (like `eventUUID`) comes back unchanged. Keep it that way: dropping
+  `eventUUID` would make the native import fail.
+
+## Drop box API (frozen contract, 2026-09-29)
+
+This section is the contract between hunt-web and the native app. Both sides
+are built against **this text**, not against the design notes; any change to
+the Worker has to be written here first. Design reasoning:
+`hunt-drop-box-plan.md`; deployment log and test results:
+`hunt-dropbox-worker.md` (both in the HuntManagement project). Worker source:
+`worker/index.js` in this repo.
+
+**Base URL:** `https://hunt-dropbox.itunes-usa.workers.dev`
+
+The Worker stores one opaque JSON package per hunt, with a version counter.
+It never looks inside `payload` — no schema validation, nothing to migrate
+when the package format above changes.
+
+### Token and link
+
+- `token` = 22 characters of base64url: `/^[A-Za-z0-9_-]{22}$/` (16 random
+  bytes, unpadded). Anything else gets 404 without touching storage.
+- **The native app originates every token**, once per hunt, and keeps it as
+  `Event.shareToken` so the same hunt keeps the same drop box. The web editor
+  never invents one; it only uses what its link gave it.
+- Share link: `http://hunt.bergvik.org/#h=<token>` (becomes `https://` once
+  HTTPS is enabled on the site). The token sits in the fragment, so it is
+  never sent to the web host. The token is the only credential: anyone with
+  the link can read and write that one hunt.
+
+### Stored envelope
+
+```json
+{
+  "version": 6,
+  "updatedAt": "2026-09-29T14:12:03.512Z",
+  "updatedBy": "Stefan (web)",
+  "payload": { "packageVersion": 1, "eventUUID": "…", "event": { } }
+}
+```
+
+- `version`: integer, 1 for the first write, +1 on every accepted write.
+- `updatedAt`: set by the Worker, ISO 8601 UTC **with milliseconds**. Swift:
+  use an `ISO8601DateFormatter` with `.withFractionalSeconds` (the default
+  formatter rejects this string).
+- `updatedBy`: the writer's own label, trimmed, max 80 characters; `"okänd"`
+  when missing or blank. Suggested forms: `"Fredrik (Mac)"`, `"Stefan (web)"`.
+- `payload`: the package exactly as written. It must be a JSON object;
+  anything else is refused.
+
+### Endpoints
+
+| Request | Success | Other outcomes |
+|---|---|---|
+| `GET /h/<token>` | **200** the whole envelope | **404** `{"error":"not_found"}` if nothing is stored |
+| `GET /h/<token>/meta` | **200** `{"version","updatedAt","updatedBy"}` (no payload) | **404** as above |
+| `PUT /h/<token>` body `{"baseVersion":N,"updatedBy":"…","payload":{…}}` | **200** `{"version":N+1}` | **409** conflict, **400**, **413** (see below) |
+| `DELETE /h/<token>` with header `X-Admin-Key` | **200** `{"deleted":true}` | **403** `{"error":"forbidden"}` without the right key |
+
+Use `Content-Type: application/json` on PUT. Every response is JSON with
+`Cache-Control: no-store`. Any other path gives **404** `not_found`; any
+other method gives **405** `method_not_allowed`.
+
+### Versioning rules
+
+- `baseVersion` is the version your data was based on: the `version` from
+  your last successful GET, or from your last successful PUT's response.
+  **`0` means "create"** — the first push of a brand-new token. Missing is
+  treated as 0; it must otherwise be a non-negative integer.
+- If `baseVersion` isn't the stored version, nothing is written and the
+  answer is **409** with the current state, so the client can say who
+  changed it and when:
+  `{"error":"conflict","version":7,"updatedAt":"…","updatedBy":"Fredrik (Mac)"}`
+  (just `"version":0` when nothing is stored, e.g. the hunt was deleted or
+  never created). The right response is to fetch first, never to retry with a bumped
+  `baseVersion` — that would overwrite the other person's work.
+- The check is a real compare-and-swap on R2 (conditional write on the
+  object's etag), verified on production: 12 simultaneous writes on the same
+  base produce exactly one 200 and eleven 409s, for creates and updates alike.
+- A PUT replaces the whole payload. There is no merge and no partial update.
+
+### Errors
+
+| Status | `error` | Cause |
+|---|---|---|
+| 400 | `bad_json` | body isn't valid JSON |
+| 400 | `bad_body` | body is JSON but not an object |
+| 400 | `bad_base_version` | `baseVersion` present but not a non-negative integer |
+| 400 | `missing_payload` | `payload` missing, null, or not an object |
+| 403 | `forbidden` | DELETE without the correct `X-Admin-Key` |
+| 404 | `not_found` | nothing stored for this token, malformed token, or unknown path |
+| 405 | `method_not_allowed` | e.g. PUT on `/meta` |
+| 409 | `conflict` | stale `baseVersion` (body carries the current meta, see above) |
+| 413 | `too_large` | body over 2,000,000 bytes (a real hunt is ~40 KB) |
+
+### Operational rules
+
+- **Polling** hits `/meta` only, so a change check never downloads the hunt.
+  Suggested moments: on open, when the app or tab comes back to the
+  foreground, after your own successful push, and at a slow interval (a few
+  minutes) while focused. If a newer version arrives while you have unsent
+  local edits, tell the person to send (or resolve) first; never offer to
+  discard their edits.
+- **CORS**: browsers may call the Worker only from `http://hunt.bergvik.org`
+  and `https://hunt.bergvik.org` (Worker var `ALLOWED_ORIGIN`). The native app
+  isn't subject to CORS.
+- **Expiry**: an R2 lifecycle rule deletes a hunt **400 days after its last
+  write**. A hunt that keeps being edited never expires.
+- **DELETE is admin-only.** `ADMIN_KEY` is a Worker secret held by Fredrik;
+  it must never be built into the native app or the web page.
+- Nothing can be listed: there is no endpoint that enumerates tokens.

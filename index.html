@@ -278,6 +278,30 @@
   .attendee-row input { width: auto; }
   table.assign [data-freeform] { margin-top: 4px; }
   #fileInput { display: none; }
+  .dropbox-status {
+    display: none;
+    width: 100%;
+    order: 11;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .dropbox-status.visible { display: block; }
+  .dropbox-status.ok { color: var(--accent); }
+  .dropbox-status.warn { color: var(--danger); }
+  .dropbox-banner {
+    display: none;
+    margin: 10px 20px 0;
+    padding: 10px 14px;
+    border: 1px solid #d9b44a;
+    background: #fff7e0;
+    border-radius: 8px;
+    font-size: 13px;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .dropbox-banner.visible { display: flex; }
+  .dropbox-banner .msg { flex: 1; min-width: 220px; }
   .hint {
     font-size: 12px;
     color: var(--muted);
@@ -349,13 +373,21 @@
   <button class="btn" id="openBtn">Öppna fil…</button>
   <button class="btn" id="shareLinkBtn" disabled>Dela länk…</button>
   <button class="btn" id="sendBackBtn" disabled>Skicka tillbaka…</button>
+  <button class="btn" id="fetchLatestBtn" style="display:none">Hämta senaste</button>
   <button class="btn primary" id="saveBtn" disabled>Spara ändringar…</button>
   <div class="share-box" id="shareBox">
     <input type="text" id="shareLinkInput" readonly>
     <span class="status" id="shareLinkStatus"></span>
     <button class="btn small" id="closeShareLinkBtn">Stäng</button>
   </div>
+  <div class="dropbox-status" id="dropboxStatus"></div>
 </header>
+
+<div class="dropbox-banner no-print" id="dropboxBanner">
+  <span class="msg" id="dropboxBannerMsg"></span>
+  <button class="btn small" id="bannerSaveFileBtn">Spara mina ändringar som fil</button>
+  <button class="btn small primary" id="bannerFetchBtn">Hämta senaste</button>
+</div>
 
 <nav class="tabs no-print" id="tabs">
   <button data-tab="setup" class="active">Förberedelse</button>
@@ -502,11 +534,16 @@
 
   // ---------- file load / save ----------
 
-  function loadPackage(pkg) {
+  // dropboxInfo: null for a hunt from a file, sample or old #d= link; for a
+  // hunt from the drop box, {token, baseVersion, syncedHash, lastMeta}
+  // (see the drop box section below). keepTab keeps the current tab when
+  // the same hunt is just being refreshed from the drop box.
+  function loadPackage(pkg, dropboxInfo, keepTab) {
     if (!pkg || pkg.packageVersion !== 1) {
       alert("Filen känns inte igen som en giltig jaktdags-fil (packageVersion saknas eller stämmer inte).");
-      return;
+      return false;
     }
+    const previousTab = ui.tab;
     state = pkg;
     // Older exports (and anything from before this field existed) have no
     // eventAttendees at all — default to "everyone in the roster attends"
@@ -516,16 +553,20 @@
       state.eventAttendees = state.hunters.map((h) => h.uuid);
     }
     ui = {
-      tab: "setup",
+      tab: keepTab ? previousTab : "setup",
       selectedEventDriveLocalId: null,
       editingPost: null,
       attendeeBoxOpen: false,
       attendeeFilter: "",
     };
+    dropbox = dropboxInfo || null;
+    if (dropbox && !dropbox.syncedHash) dropbox.syncedHash = stateHash();
+    if (!dropbox) dropboxStatusText = "";
     document.getElementById("saveBtn").disabled = false;
     document.getElementById("shareLinkBtn").disabled = false;
     document.getElementById("sendBackBtn").disabled = false;
     render();
+    return true;
   }
 
   // ---------- share link (data embedded in the URL, nothing sent to a server) ----------
@@ -627,27 +668,301 @@
     if (!state) return;
     clearTimeout(autosaveTimer);
     autosaveTimer = setTimeout(() => {
+      // Typing in plain fields doesn't re-render, so this debounced hook is
+      // also what refreshes the drop box status ("ändringar ej skickade").
+      updateDropboxUi();
       doAutosave().catch(() => {
         // best-effort only — never interrupt editing over a failed autosave
       });
     }, 800);
   }
 
+  // The slot is JSON: {v: 2, encoded, dropbox}. dropbox carries the
+  // drop box token and the baseVersion this copy's edits are based on, so
+  // resuming later still knows what it was based on (and whether anything
+  // is unsent). Older slots were the bare encoded string; readAutosaveSlot
+  // still accepts those.
   async function doAutosave() {
     if (!state) return;
     const encoded = await encodeStateForLink(state);
     try {
-      localStorage.setItem(AUTOSAVE_KEY, encoded);
+      localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({
+        v: 2,
+        encoded: encoded,
+        dropbox: dropbox
+          ? {
+              token: dropbox.token,
+              baseVersion: dropbox.baseVersion,
+              syncedHash: dropbox.syncedHash,
+              lastMeta: dropbox.lastMeta || null,
+            }
+          : null,
+      }));
     } catch (e) {
       // storage full/blocked (e.g. private browsing) — the URL-based
       // checkpoint below still works even if this one doesn't
     }
     try {
-      history.replaceState(null, "", shareLinkUrl(encoded));
+      // A drop box hunt keeps its short, permanent #h= link in the address
+      // bar; the data lives in the drop box and the local slot. Only a
+      // hunt without a token (file, sample, old link) still gets the old
+      // #d= checkpoint.
+      history.replaceState(null, "", dropbox ? dropboxLinkUrl(dropbox.token) : shareLinkUrl(encoded));
     } catch (e) {
       // ignore — not essential to editing
     }
   }
+
+  function readAutosaveSlot() {
+    let raw = null;
+    try {
+      raw = localStorage.getItem(AUTOSAVE_KEY);
+    } catch (e) {
+      return null;
+    }
+    if (!raw) return null;
+    if (raw.charAt(0) === "{") {
+      try {
+        const o = JSON.parse(raw);
+        return o && typeof o.encoded === "string" ? o : null;
+      } catch (e) {
+        return null;
+      }
+    }
+    return { v: 1, encoded: raw, dropbox: null };
+  }
+
+  // ---------- drop box (short #h= links, send in / fetch latest) ----------
+  //
+  // The contract is SCHEMA.md's "Drop box API" section. The Worker stores
+  // this hunt's package under a token with a version counter; a push says
+  // which version it was based on and is refused (409) if someone else got
+  // there first. The web never invents a token: it only uses the one its
+  // #h= link gave it, and Fredrik's app originates every hunt.
+
+  const DROPBOX_BASE = "https://hunt-dropbox.itunes-usa.workers.dev";
+  const TOKEN_RE = /^[A-Za-z0-9_-]{22}$/;
+  const EDITOR_NAME_KEY = "huntEditorName";
+  const DEFAULT_EDITOR_NAME = "Webbredigering";
+  const META_POLL_MS = 3 * 60 * 1000;
+
+  // null, or {token, baseVersion, syncedHash, lastMeta, remoteMeta}
+  let dropbox = null;
+  let dropboxBusy = false;
+
+  function dropboxLinkUrl(token) {
+    return location.origin + location.pathname + "#h=" + token;
+  }
+
+  // FNV-1a over the JSON text: cheap, and enough to tell "same as what
+  // was last fetched or sent" from "edited since".
+  function stateHash() {
+    const str = JSON.stringify(state);
+    let h = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+    return (h >>> 0).toString(16) + ":" + str.length;
+  }
+
+  function isDirty() {
+    return !!(dropbox && state && stateHash() !== dropbox.syncedHash);
+  }
+
+  function formatWhen(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return "";
+    const pad = (n) => String(n).padStart(2, "0");
+    const time = pad(d.getHours()) + ":" + pad(d.getMinutes());
+    const now = new Date();
+    const sameDay = d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+    return sameDay ? time : d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + time;
+  }
+
+  function editorName() {
+    let name = null;
+    try {
+      name = localStorage.getItem(EDITOR_NAME_KEY);
+    } catch (e) {
+      // storage blocked — ask again next time, fall back below
+    }
+    if (name === null) {
+      const typed = prompt("Vad heter du? Namnet visas för Fredrik när du skickar in ändringar.", "");
+      name = typed && typed.trim() ? typed.trim() : DEFAULT_EDITOR_NAME;
+      try {
+        localStorage.setItem(EDITOR_NAME_KEY, name);
+      } catch (e) {
+        // ignore
+      }
+    }
+    return name === DEFAULT_EDITOR_NAME ? name : name + " (web)";
+  }
+
+  let dropboxStatusText = "";
+  let dropboxStatusKind = "";
+
+  function setDropboxStatus(text, kind) {
+    dropboxStatusText = text;
+    dropboxStatusKind = kind || "";
+    updateDropboxUi();
+  }
+
+  function updateDropboxUi() {
+    const sendBtn = document.getElementById("sendBackBtn");
+    const fetchBtn = document.getElementById("fetchLatestBtn");
+    const statusEl = document.getElementById("dropboxStatus");
+    const banner = document.getElementById("dropboxBanner");
+    sendBtn.textContent = dropbox ? "Skicka in" : "Skicka tillbaka…";
+    fetchBtn.style.display = dropbox ? "" : "none";
+    sendBtn.disabled = !state || dropboxBusy;
+    fetchBtn.disabled = dropboxBusy;
+
+    let text = dropboxStatusText;
+    let kind = dropboxStatusKind;
+    if (dropbox && state && isDirty() && kind !== "warn") {
+      text = "Ändringar ej skickade (baserat på version " + dropbox.baseVersion + ").";
+      kind = "";
+    }
+    statusEl.textContent = text;
+    statusEl.className = "dropbox-status" + (text ? " visible" : "") + (kind ? " " + kind : "");
+
+    const remote = dropbox && dropbox.remoteMeta;
+    if (remote && remote.version > dropbox.baseVersion) {
+      const who = (remote.updatedBy || "Någon") + " ändrade " + formatWhen(remote.updatedAt) +
+        " (version " + remote.version + ")";
+      const dirty = isDirty();
+      document.getElementById("dropboxBannerMsg").textContent = dirty
+        ? who + " medan du redigerade. Dina ändringar är inte skickade, och de går inte att skicka in " +
+          "förrän du har hämtat den nya versionen. Vill du behålla dem: spara dem som fil först."
+        : who + ". Hämta den för att se ändringarna.";
+      document.getElementById("bannerSaveFileBtn").style.display = dirty ? "" : "none";
+      document.getElementById("bannerFetchBtn").disabled = dropboxBusy;
+      banner.classList.add("visible");
+    } else {
+      banner.classList.remove("visible");
+    }
+  }
+
+  async function dropboxRequest(method, path, body) {
+    const opts = { method: method, cache: "no-store" };
+    if (body !== undefined) {
+      opts.headers = { "Content-Type": "application/json" };
+      opts.body = JSON.stringify(body);
+    }
+    const res = await fetch(DROPBOX_BASE + path, opts);
+    let data = null;
+    try {
+      data = await res.json();
+    } catch (e) {
+      // non-JSON body — leave data null
+    }
+    return { status: res.status, data: data };
+  }
+
+  // Loads the newest version from the drop box. Returns true when a hunt
+  // is on screen afterwards (fetched, or kept because the fetch failed).
+  async function fetchLatest(token, opts) {
+    opts = opts || {};
+    if (opts.confirmIfDirty && isDirty() &&
+        !confirm("Du har ändringar som inte är skickade in. Hämta ändå? De ersätts då av den senaste versionen.")) {
+      return true;
+    }
+    dropboxBusy = true;
+    setDropboxStatus("Hämtar från brevlådan…");
+    try {
+      const r = await dropboxRequest("GET", "/h/" + token);
+      if (r.status === 200 && r.data && r.data.payload) {
+        const meta = { version: r.data.version, updatedAt: r.data.updatedAt, updatedBy: r.data.updatedBy };
+        const ok = loadPackage(r.data.payload, {
+          token: token,
+          baseVersion: r.data.version,
+          syncedHash: null,
+          lastMeta: meta,
+          remoteMeta: null,
+        }, opts.keepTab);
+        if (!ok) return false;
+        setDropboxStatus("Hämtad: version " + meta.version + ", senast ändrad av " +
+          (meta.updatedBy || "okänd") + " " + formatWhen(meta.updatedAt) + ".", "ok");
+        return true;
+      }
+      if (r.status === 404) {
+        setDropboxStatus("Den här länken har ingen jakt i brevlådan ännu. Be Fredrik skicka den från appen.", "warn");
+        return !!state;
+      }
+      setDropboxStatus("Brevlådan svarade med ett fel (" + r.status + ").", "warn");
+      return !!state;
+    } catch (e) {
+      setDropboxStatus("Kunde inte nå brevlådan. Kontrollera uppkopplingen och försök igen.", "warn");
+      return !!state;
+    } finally {
+      dropboxBusy = false;
+      updateDropboxUi();
+    }
+  }
+
+  // Cheap change check: /meta never downloads the hunt.
+  async function checkMeta() {
+    if (!dropbox || dropboxBusy) return;
+    try {
+      const r = await dropboxRequest("GET", "/h/" + dropbox.token + "/meta");
+      if (r.status === 200 && r.data && dropbox) {
+        dropbox.remoteMeta = r.data.version > dropbox.baseVersion ? r.data : null;
+        updateDropboxUi();
+      }
+    } catch (e) {
+      // offline — try again at the next poll
+    }
+  }
+
+  async function sendToDropbox() {
+    if (!isDirty()) {
+      setDropboxStatus("Inga ändringar att skicka (version " + dropbox.baseVersion + ").", "ok");
+      return;
+    }
+    const updatedBy = editorName();
+    const sentHash = stateHash();
+    dropboxBusy = true;
+    setDropboxStatus("Skickar in…");
+    try {
+      const r = await dropboxRequest("PUT", "/h/" + dropbox.token, {
+        baseVersion: dropbox.baseVersion,
+        updatedBy: updatedBy,
+        payload: state,
+      });
+      if (r.status === 200 && r.data) {
+        const now = new Date().toISOString();
+        dropbox.baseVersion = r.data.version;
+        dropbox.syncedHash = sentHash;
+        dropbox.lastMeta = { version: r.data.version, updatedAt: now, updatedBy: updatedBy };
+        dropbox.remoteMeta = null;
+        scheduleAutosave();
+        setDropboxStatus("Skickat till Fredrik " + formatWhen(now) + " (version " + r.data.version + ").", "ok");
+        return;
+      }
+      if (r.status === 409) {
+        dropbox.remoteMeta = r.data && r.data.version ? r.data : null;
+        setDropboxStatus("Någon annan har ändrat — hämta först. Inget skickades.", "warn");
+        return;
+      }
+      setDropboxStatus("Brevlådan tog inte emot ändringarna (" + r.status + ").", "warn");
+    } catch (e) {
+      // Drop box unreachable: fall back to the old file + email route, so
+      // the edits still have a way to reach Fredrik.
+      await sendBackByEmail("Kunde inte nå brevlådan, så filen har laddats ner och ett mejl öppnats i stället. ");
+    } finally {
+      dropboxBusy = false;
+      updateDropboxUi();
+    }
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") checkMeta();
+  });
+  setInterval(() => {
+    if (document.visibilityState === "visible") checkMeta();
+  }, META_POLL_MS);
 
   function handleFile(file) {
     const reader = new FileReader();
@@ -704,6 +1019,7 @@
 
   function render() {
     scheduleAutosave();
+    updateDropboxUi();
 
     document.getElementById("eventSummary").textContent = state
       ? (state.event.locationName || "Okänd plats") + " — " + (state.event.date || "")
@@ -1326,8 +1642,7 @@
     btn.disabled = true;
     status.textContent = "";
     try {
-      const encoded = await encodeStateForLink(state);
-      const url = shareLinkUrl(encoded);
+      const url = dropbox ? dropboxLinkUrl(dropbox.token) : shareLinkUrl(await encodeStateForLink(state));
       input.value = url;
       box.classList.add("visible");
       input.focus();
@@ -1349,12 +1664,26 @@
     }
   };
 
+  // "Skicka in" for a drop box hunt; the old email route otherwise (and as
+  // the drop box's fallback when it can't be reached).
   document.getElementById("sendBackBtn").onclick = async () => {
+    if (dropbox) {
+      await sendToDropbox();
+      return;
+    }
     const btn = document.getElementById("sendBackBtn");
+    btn.disabled = true;
+    try {
+      await sendBackByEmail("");
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  async function sendBackByEmail(statusPrefix) {
     const box = document.getElementById("shareBox");
     const input = document.getElementById("shareLinkInput");
     const status = document.getElementById("shareLinkStatus");
-    btn.disabled = true;
     status.textContent = "";
     try {
       // A mailto: link can only pre-fill a subject/body, never attach a
@@ -1368,8 +1697,9 @@
       const filename = suggestedFileName(state);
       downloadJsonPackage(filename);
 
-      const encoded = await encodeStateForLink(state);
-      const url = shareLinkUrl(encoded);
+      // A drop box hunt's link is the short #h= one; the long #d= link is
+      // only for hunts that have no drop box.
+      const url = dropbox ? dropboxLinkUrl(dropbox.token) : shareLinkUrl(await encodeStateForLink(state));
       input.value = url;
       box.classList.add("visible");
       input.focus();
@@ -1384,14 +1714,22 @@
         "mailto:" + encodeURIComponent(OWNER_EMAIL) +
         "?subject=" + encodeURIComponent(subject) +
         "&body=" + encodeURIComponent(body);
-      status.textContent =
+      status.textContent = statusPrefix +
         "Fil nedladdad (" + filename + ") och e-post öppnad — bifoga filen och skicka. " +
         "Länken nedan fungerar också om det är enklare.";
     } catch (e) {
       alert("Kunde inte skapa länken: " + e.message);
-    } finally {
-      btn.disabled = false;
     }
+  }
+
+  document.getElementById("fetchLatestBtn").onclick = () => {
+    if (dropbox) fetchLatest(dropbox.token, { confirmIfDirty: true, keepTab: true });
+  };
+  document.getElementById("bannerFetchBtn").onclick = () => {
+    if (dropbox) fetchLatest(dropbox.token, { confirmIfDirty: true, keepTab: true });
+  };
+  document.getElementById("bannerSaveFileBtn").onclick = () => {
+    if (state) downloadJsonPackage(suggestedFileName(state));
   };
 
   document.getElementById("closeShareLinkBtn").onclick = () => {
@@ -1405,27 +1743,55 @@
   // falling back to the empty state, so reopening the page (or refreshing
   // it) resumes automatically instead of losing whatever was on screen.
   function tryResumeAutosave() {
-    let saved = null;
-    try {
-      saved = localStorage.getItem(AUTOSAVE_KEY);
-    } catch (e) {
-      // storage blocked (e.g. private browsing) — nothing to resume
-    }
+    const saved = readAutosaveSlot();
     if (!saved) {
       render();
       return;
     }
-    decodeStateFromLink(saved)
-      .then(loadPackage)
+    decodeStateFromLink(saved.encoded)
+      .then((pkg) => {
+        loadPackage(pkg, saved.dropbox);
+        if (dropbox) checkMeta();
+      })
       .catch(() => {
         // corrupted autosave — don't block the app over it, just start clean
         render();
       });
   }
 
+  // #h=<token>: the drop box. If this browser already has unsent edits for
+  // the same token, keep them (and just check whether someone else has
+  // pushed since); otherwise fetch the newest version.
+  async function openDropboxLink(token) {
+    const saved = readAutosaveSlot();
+    if (saved && saved.dropbox && saved.dropbox.token === token) {
+      try {
+        const pkg = await decodeStateFromLink(saved.encoded);
+        loadPackage(pkg, saved.dropbox);
+        if (isDirty()) {
+          setDropboxStatus("");
+          checkMeta();
+          return;
+        }
+      } catch (e) {
+        // unreadable slot — fall through to a fresh fetch
+      }
+    }
+    await fetchLatest(token, { keepTab: !!state });
+    if (!state) render();
+  }
+
   function init() {
     const hash = location.hash;
-    if (hash && hash.indexOf("#d=") === 0) {
+    if (hash && hash.indexOf("#h=") === 0) {
+      const token = hash.slice(3);
+      if (TOKEN_RE.test(token)) {
+        openDropboxLink(token);
+      } else {
+        alert("Länken är ofullständig (fel längd på koden). Be om en ny länk.");
+        tryResumeAutosave();
+      }
+    } else if (hash && hash.indexOf("#d=") === 0) {
       decodeStateFromLink(hash.slice(3))
         .then(loadPackage)
         .catch((e) => {

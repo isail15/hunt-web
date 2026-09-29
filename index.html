@@ -308,6 +308,55 @@
     margin: -8px 0 16px;
   }
 
+  /* --- Help (?) popovers --- */
+  .help-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    margin: 0 0 0 5px;
+    border: 1px solid var(--muted);
+    border-radius: 50%;
+    background: transparent;
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    text-transform: none;
+    letter-spacing: 0;
+    vertical-align: middle;
+    cursor: pointer;
+  }
+  .help-btn:hover, .help-btn:focus-visible, .help-btn[aria-expanded="true"] {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-bg);
+  }
+  #helpPop {
+    position: absolute;
+    z-index: 1000;
+    display: none;
+    box-sizing: border-box;
+    width: 340px;
+    max-width: calc(100vw - 16px);
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+    padding: 10px 12px 8px;
+    font-size: 13px;
+    line-height: 1.45;
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: normal;
+  }
+  #helpPop h4 { margin: 0 0 6px; font-size: 13px; }
+  #helpPop p { margin: 0 0 7px; }
+
   /* --- Report --- */
   #reportRoot {
     background: white;
@@ -355,7 +404,7 @@
   .report-row .rc { color: #444; }
 
   @media print {
-    .no-print { display: none !important; }
+    .no-print, .help-btn, #helpPop { display: none !important; }
     body { background: white; }
     main { padding: 0; max-width: none; }
     .panel { border: none; padding: 0; border-radius: 0; }
@@ -375,6 +424,7 @@
   <button class="btn" id="sendBackBtn" disabled>Skicka tillbaka…</button>
   <button class="btn" id="fetchLatestBtn" style="display:none">Hämta senaste</button>
   <button class="btn primary" id="saveBtn" disabled>Spara ändringar…</button>
+  <button type="button" class="help-btn" data-help="sync" aria-label="Hjälp: spara, skicka och dela" title="Hjälp">?</button>
   <div class="share-box" id="shareBox">
     <input type="text" id="shareLinkInput" readonly>
     <span class="status" id="shareLinkStatus"></span>
@@ -403,6 +453,8 @@
     </div>
   </div>
 </main>
+
+<div id="helpPop" role="dialog" aria-live="polite"></div>
 
 <script>
 (function () {
@@ -1018,6 +1070,7 @@
   // ---------- rendering ----------
 
   function render() {
+    closeHelp();
     scheduleAutosave();
     updateDropboxUi();
 
@@ -1058,6 +1111,141 @@
     };
   }
 
+  // ---- Help (?) popovers ----
+  // One small "?" button per field that needs explaining; clicking it opens
+  // a popover with the text below (Swedish, like the rest of the UI). Buttons
+  // carry data-help="<key>"; a single delegated click handler below opens
+  // the popover, so re-rendering a tab never has to re-bind anything.
+  const HELP = {
+    sync: {
+      t: "Spara, skicka och dela",
+      p: [
+        "Skicka in — skickar dina ändringar till Fredrik via brevlådan. Första gången frågar den efter ditt namn. Om någon annan hunnit ändra före dig skickas inget; hämta då senaste versionen först.",
+        "Hämta senaste — hämtar den nyaste versionen från brevlådan. Har du osända ändringar frågar sidan först, eftersom de ersätts.",
+        "Spara ändringar… — laddar ner jaktdagen som en fil på din enhet, som säkerhetskopia eller om du saknar täckning.",
+        "Dela länk… — ger en länk som öppnar samma jaktdag.",
+        "Öppna fil… — läser in en sparad jaktdagsfil. (Skicka tillbaka… används för en jaktdag som öppnats från fil: den laddar ner filen och öppnar ett mejl.)",
+        "Ditt arbete sparas dessutom automatiskt i webbläsaren, så det finns kvar om du laddar om sidan.",
+      ],
+    },
+    huntType: { t: "Jakttyp", p: ["Fritext, t.ex. Klövvilt. Står först i Rapportens rubrik: Jakttyp, Plats — datum."] },
+    comment: { t: "Kommentar", p: ["Egen anteckning om jaktdagen. Visas inte i Rapporten."] },
+    rally: {
+      t: "Återsamlingsplats",
+      p: ["Där alla samlas igen efter såtet. Visas i Rapporten bredvid såtets namn. Lämna tomt om det inte behövs."],
+    },
+    resort: {
+      t: "Sortera om bilordning",
+      p: [
+        "Numrerar om ”Ordning i bil” till 1, 2, 3… för varje bil på det här såtet, utifrån nuvarande ordning. Pass utan tal hamnar sist, och lika tal behåller tabellens radordning.",
+        "Pass utan bil rörs inte. Övriga såt påverkas inte.",
+        "Kör den efter att du skrivit in t.ex. 2,1 för att slippa decimaltalen. Det är en städning — själva ordningen bestämmer du i tabellen.",
+      ],
+    },
+    car: {
+      t: "Bil",
+      p: [
+        "Vilken bil eller buss jägaren åker i till posten. Skriv fritt (t.ex. Buss 1) eller välj ett tidigare värde ur listan.",
+        "I Rapporten grupperas passen efter bil. Är fältet tomt hör passet inte till någon bil.",
+      ],
+    },
+    carOrder: {
+      t: "Ordning i bil",
+      p: [
+        "Turordningen inom bilen: i vilken ordning jägarna stiger av, så som de sitter i bussen. Lägst tal först.",
+        "Ska ett pass in mellan 2 och 3? Skriv 2,1 — då hamnar det däremellan. Tryck sedan på Sortera om bilordning för att få rena tal 1, 2, 3…",
+        "Ordningen gäller inom varje bil, så två bilar kan båda ha en etta. Tomt = ingen ordning (räknas sist). Rapporten sorteras än så länge efter postnummer, men ordningen följer med tillbaka till appen.",
+      ],
+    },
+    addPost: {
+      t: "Lägg till post",
+      p: [
+        "Nr är postnumret. Kod är en eventuell bokstav efter numret (6 + B blir 6B). Kryssa Torn om det är ett jakttorn; posten visas då med (T).",
+        "+ Lägg till post skapar ett nytt pass på det här såtet, och skapar även själva posten om den inte finns.",
+      ],
+    },
+    carRO: { t: "Bil", p: ["Visar bilen som angetts under Förberedelse. Ändra den där."] },
+    hunter: {
+      t: "Jägare",
+      p: [
+        "Vem som står på passet: en jägare, en funktionsroll (Hundförare, Utställare) eller ”✎ Skriv in namn…” om personen inte finns i listan.",
+        "Listan visar bara jägare som är markerade som deltagare i rutan ovanför.",
+      ],
+    },
+    result: { t: "Resultat", p: ["Fritext om passets utfall. Följer med i Rapporten, på samma rad som passet."] },
+    attendees: {
+      t: "Deltagare",
+      p: [
+        "Vilka jägare som är med den här dagen. Bara de visas i Jägare-listan under Passfördelning. ”X av Y” = markerade av alla i registret.",
+      ],
+    },
+  };
+
+  function helpBtn(key) {
+    return '<button type="button" class="help-btn no-print" data-help="' + key +
+      '" aria-label="Hjälp: ' + escapeAttr(HELP[key].t) + '" title="Hjälp">?</button>';
+  }
+
+  let helpOpenFor = null;
+
+  function closeHelp() {
+    const pop = document.getElementById("helpPop");
+    if (pop) pop.style.display = "none";
+    if (helpOpenFor) helpOpenFor.setAttribute("aria-expanded", "false");
+    helpOpenFor = null;
+  }
+
+  function openHelp(btn) {
+    const h = HELP[btn.dataset.help];
+    if (!h) return;
+    const pop = document.getElementById("helpPop");
+    pop.innerHTML = "";
+    const title = document.createElement("h4");
+    title.textContent = h.t;
+    pop.appendChild(title);
+    h.p.forEach((txt) => {
+      const p = document.createElement("p");
+      p.textContent = txt;
+      pop.appendChild(p);
+    });
+    pop.style.visibility = "hidden";
+    pop.style.display = "block";
+    const r = btn.getBoundingClientRect();
+    const docW = document.documentElement.clientWidth;
+    let left = r.left + window.scrollX - 12;
+    left = Math.max(8, Math.min(left, window.scrollX + docW - pop.offsetWidth - 8));
+    let top = r.bottom + window.scrollY + 6;
+    // Not enough room below the button: open above it instead.
+    if (r.bottom + pop.offsetHeight + 12 > window.innerHeight && r.top - pop.offsetHeight - 12 > 0) {
+      top = r.top + window.scrollY - pop.offsetHeight - 6;
+    }
+    pop.style.left = left + "px";
+    pop.style.top = top + "px";
+    pop.style.visibility = "visible";
+    btn.setAttribute("aria-expanded", "true");
+    helpOpenFor = btn;
+  }
+
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest && e.target.closest(".help-btn");
+    if (btn) {
+      e.preventDefault();
+      const same = helpOpenFor === btn;
+      closeHelp();
+      if (!same) openHelp(btn);
+      return;
+    }
+    if (helpOpenFor && !e.target.closest("#helpPop")) closeHelp();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && helpOpenFor) {
+      const b = helpOpenFor;
+      closeHelp();
+      b.focus();
+    }
+  });
+  window.addEventListener("resize", closeHelp);
+
   // ---- Setup tab (Förberedelse): event fields, drives, posts+car+order ----
 
   function renderSetup(app) {
@@ -1068,8 +1256,8 @@
     grid.innerHTML =
       '<label class="field">Datum<input data-f="date" type="date"></label>' +
       '<label class="field">Plats<input data-f="locationName" type="text"></label>' +
-      '<label class="field">Jakttyp<input data-f="huntType" type="text"></label>' +
-      '<label class="field">Kommentar<input data-f="comment" type="text"></label>';
+      '<label class="field"><span>Jakttyp' + helpBtn("huntType") + '</span><input data-f="huntType" type="text"></label>' +
+      '<label class="field"><span>Kommentar' + helpBtn("comment") + '</span><input data-f="comment" type="text"></label>';
     wrap.appendChild(grid);
     grid.querySelectorAll("input").forEach((el) => bindPlainField(el, state.event, el.dataset.f));
 
@@ -1197,7 +1385,7 @@
       '<button class="btn small" data-down' + (isLast ? " disabled" : "") + ">↓</button>" +
       '<span class="drive-name">Såt ' + driveNumber + ": " + escapeHtml(ed.driveName) + "</span>" +
       '<span class="pass-count">' + passCount + " pass,</span>" +
-      '<span class="rally">Återsamlingsplats: <input type="text" data-rally></span>' +
+      '<span class="rally">Återsamlingsplats:' + helpBtn("rally") + ' <input type="text" data-rally></span>' +
       '<button class="btn small danger" data-del-drive>Ta bort drev</button>';
     card.appendChild(header);
 
@@ -1215,7 +1403,8 @@
 
     const orderToolbar = document.createElement("div");
     orderToolbar.className = "car-order-toolbar";
-    orderToolbar.innerHTML = '<button class="btn small" data-resort-order>Sortera om bilordning</button>';
+    orderToolbar.innerHTML =
+      '<button class="btn small" data-resort-order>Sortera om bilordning</button>' + helpBtn("resort");
     orderToolbar.querySelector("[data-resort-order]").onclick = () => {
       resortCarOrder(ed.localId);
       render();
@@ -1225,7 +1414,8 @@
     const table = document.createElement("table");
     table.className = "assign";
     table.innerHTML =
-      "<thead><tr><th>Pass</th><th>Bil</th><th>Ordning i bil</th><th></th></tr></thead><tbody></tbody>";
+      "<thead><tr><th>Pass</th><th>Bil" + helpBtn("car") + "</th><th>Ordning i bil" + helpBtn("carOrder") +
+      "</th><th></th></tr></thead><tbody></tbody>";
     const tbody = table.querySelector("tbody");
 
     assignmentsForDrive(ed.localId).forEach((pa) => {
@@ -1266,7 +1456,7 @@
       }
 
       bindPlainField(tr.querySelector("[data-car]"), pa, "car");
-      bindPlainField(tr.querySelector("[data-order]"), pa, "carOrder", (v) => (v === null ? null : parseFloat(v)));
+      bindPlainField(tr.querySelector("[data-order]"), pa, "carOrder", (v) => (v === null ? null : parseFloat(v.replace(",", "."))));
       tr.querySelector("[data-del]").onclick = () => {
         state.postAssignments = state.postAssignments.filter((x) => x !== pa);
         render();
@@ -1282,7 +1472,7 @@
       '<input class="num" data-num placeholder="Nr">' +
       '<input class="num" data-code placeholder="Kod">' +
       '<label class="tower-check"><input type="checkbox" data-torn> Torn</label>' +
-      '<button class="btn small" data-add-post>+ Lägg till post</button>' +
+      '<button class="btn small" data-add-post>+ Lägg till post</button>' + helpBtn("addPost") +
       '<datalist id="carValues">' +
       carValueList().map((c) => '<option value="' + escapeAttr(c) + '">').join("") +
       "</datalist>";
@@ -1373,7 +1563,8 @@
     const table = document.createElement("table");
     table.className = "assign";
     table.innerHTML =
-      "<thead><tr><th>Pass</th><th>Bil</th><th>Jägare</th><th>Resultat</th></tr></thead><tbody></tbody>";
+      "<thead><tr><th>Pass</th><th>Bil" + helpBtn("carRO") + "</th><th>Jägare" + helpBtn("hunter") +
+      "</th><th>Resultat" + helpBtn("result") + "</th></tr></thead><tbody></tbody>";
     const tbody = table.querySelector("tbody");
 
     assignmentsForDrive(ed.localId).forEach((pa) => {
@@ -1470,7 +1661,10 @@
       ui.attendeeBoxOpen = !ui.attendeeBoxOpen;
       render();
     };
-    header.appendChild(countLabel);
+    const countWrap = document.createElement("span");
+    countWrap.appendChild(countLabel);
+    countWrap.insertAdjacentHTML("beforeend", helpBtn("attendees"));
+    header.appendChild(countWrap);
     header.appendChild(toggleBtn);
     box.appendChild(header);
 

@@ -363,6 +363,24 @@
     color: black;
     padding: 12px;
   }
+  /* Location photo (package field locationImageDataURL): top-left of the
+     Rapport header, title and rule stay centred. Only rendered when the
+     package has a photo, so without one the header is exactly as before. */
+  .report-header {
+    position: relative;
+    min-height: 56px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .report-header .report-location-img {
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 56px;
+    width: 56px;
+    object-fit: contain;
+  }
   #reportRoot h2 {
     font-size: 21px;
     margin: 0 0 8px;
@@ -697,6 +715,26 @@
     return JSON.parse(new TextDecoder().decode(jsonBytes));
   }
 
+  // The Location photo (locationImageDataURL) is base64 and barely
+  // compresses, so it must never go into a #d= link or the address-bar
+  // checkpoint (that's what made links too long to send in the first
+  // place). It stays in the state, the local autosave slot, saved files and
+  // the drop box payload; only link encodings drop it.
+  function withoutLocationImage(pkg) {
+    if (!pkg || typeof pkg !== "object" || !("locationImageDataURL" in pkg)) return pkg;
+    const copy = Object.assign({}, pkg);
+    delete copy.locationImageDataURL;
+    return copy;
+  }
+
+  // Only a plain base64 image data: URL of a known type is ever used as an
+  // <img src>; anything else in that field is ignored.
+  const LOCATION_IMAGE_RE = /^data:image\/(png|jpeg|gif|webp|heic|heif);base64,[A-Za-z0-9+\/]+={0,2}$/;
+  function locationImageSrc(pkg) {
+    const v = pkg && pkg.locationImageDataURL;
+    return typeof v === "string" && LOCATION_IMAGE_RE.test(v) ? v : null;
+  }
+
   function shareLinkUrl(encoded) {
     return location.origin + location.pathname + "#d=" + encoded;
   }
@@ -778,7 +816,11 @@
       // bar; the data lives in the drop box and the local slot. Only a
       // hunt without a token (file, sample, old link) still gets the old
       // #d= checkpoint.
-      history.replaceState(null, "", dropbox ? dropboxLinkUrl(dropbox.token) : shareLinkUrl(encoded));
+      let checkpoint = encoded;
+      if (!dropbox && state && "locationImageDataURL" in state) {
+        checkpoint = await encodeStateForLink(withoutLocationImage(state));
+      }
+      history.replaceState(null, "", dropbox ? dropboxLinkUrl(dropbox.token) : shareLinkUrl(checkpoint));
     } catch (e) {
       // ignore — not essential to editing
     }
@@ -1766,7 +1808,24 @@
     if (state.event.huntType) titleParts.push(state.event.huntType);
     titleParts.push(state.event.locationName || "");
     const title = titleParts.join(", ") + " — " + (state.event.date || "");
-    root.innerHTML = "<h2>" + escapeHtml(title) + "</h2><hr class=\"report-title-rule\">";
+    const headerHtml = "<h2>" + escapeHtml(title) + "</h2><hr class=\"report-title-rule\">";
+    const imgSrc = locationImageSrc(state);
+    if (imgSrc) {
+      // Photo top-left, title and rule centred beside it (mirrors the
+      // native report). The <img> is set through the DOM, never HTML.
+      const header = document.createElement("div");
+      header.className = "report-header";
+      header.innerHTML = headerHtml;
+      const img = document.createElement("img");
+      img.className = "report-location-img";
+      img.alt = "";
+      img.onerror = () => img.remove();
+      img.src = imgSrc;
+      header.insertBefore(img, header.firstChild);
+      root.appendChild(header);
+    } else {
+      root.innerHTML = headerHtml;
+    }
 
     const grid = document.createElement("div");
     grid.className = "report-grid";
@@ -1871,7 +1930,7 @@
     btn.disabled = true;
     status.textContent = "";
     try {
-      const url = dropbox ? dropboxLinkUrl(dropbox.token) : shareLinkUrl(await encodeStateForLink(state));
+      const url = dropbox ? dropboxLinkUrl(dropbox.token) : shareLinkUrl(await encodeStateForLink(withoutLocationImage(state)));
       input.value = url;
       box.classList.add("visible");
       input.focus();
@@ -1928,7 +1987,7 @@
 
       // A drop box hunt's link is the short #h= one; the long #d= link is
       // only for hunts that have no drop box.
-      const url = dropbox ? dropboxLinkUrl(dropbox.token) : shareLinkUrl(await encodeStateForLink(state));
+      const url = dropbox ? dropboxLinkUrl(dropbox.token) : shareLinkUrl(await encodeStateForLink(withoutLocationImage(state)));
       input.value = url;
       box.classList.add("visible");
       input.focus();
@@ -2010,6 +2069,25 @@
     if (!state) render();
   }
 
+  // A #d= link never carries the Location photo (see withoutLocationImage),
+  // so a reload from the address-bar checkpoint would lose it. If this
+  // browser's autosave slot holds the same hunt (same eventUUID) with a
+  // photo, take the photo from there.
+  async function restoreLocationImageFromSlot(pkg) {
+    try {
+      if (!pkg || pkg.locationImageDataURL || !pkg.eventUUID) return pkg;
+      const saved = readAutosaveSlot();
+      if (!saved) return pkg;
+      const slotPkg = await decodeStateFromLink(saved.encoded);
+      if (slotPkg && slotPkg.eventUUID === pkg.eventUUID && locationImageSrc(slotPkg)) {
+        pkg.locationImageDataURL = slotPkg.locationImageDataURL;
+      }
+    } catch (e) {
+      // best-effort: no photo is a normal state
+    }
+    return pkg;
+  }
+
   function init() {
     const hash = location.hash;
     if (hash && hash.indexOf("#h=") === 0) {
@@ -2022,6 +2100,7 @@
       }
     } else if (hash && hash.indexOf("#d=") === 0) {
       decodeStateFromLink(hash.slice(3))
+        .then(restoreLocationImageFromSlot)
         .then(loadPackage)
         .catch((e) => {
           alert("Kunde inte läsa länkens data: " + e.message);

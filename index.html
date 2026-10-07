@@ -399,7 +399,10 @@
     font-size: 12px;
     padding: 1px 0;
   }
-  .report-row .rp { width: 46px; flex: none; font-variant-numeric: tabular-nums; }
+  /* Post column: never wraps. Its width is measured from the longest label
+     when the report is built (fitReportPostColumn) so every row still lines
+     up; 64px is only the fallback. */
+  .report-row .rp { width: var(--rp-w, 64px); flex: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .report-row .rn { flex: 1; }
   .report-row .rc { color: #444; }
 
@@ -1812,6 +1815,21 @@
     wrap.appendChild(root);
     app.innerHTML = "";
     app.appendChild(wrap);
+    fitReportPostColumn(root);
+  }
+
+  // Sizes the Rapport's post column to the widest label (e.g. "T82.5 (T)")
+  // so a post never wraps onto a second line, while all rows still line up.
+  // Needs the report in the document to measure, so it runs after append.
+  function fitReportPostColumn(root) {
+    const labels = root.querySelectorAll(".rp");
+    let max = 0;
+    labels.forEach((el) => {
+      el.style.width = "max-content";
+      max = Math.max(max, el.getBoundingClientRect().width);
+      el.style.width = "";
+    });
+    if (max > 0) root.style.setProperty("--rp-w", Math.ceil(max) + 2 + "px");
   }
 
   // ---------- misc ----------

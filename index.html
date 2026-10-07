@@ -519,22 +519,33 @@
       .sort((a, b) => a.sortOrder - b.sortOrder);
   }
 
-  // "Sortera om bilordning" (Förberedelse tab): renumbers carOrder to a
-  // clean 1, 2, 3… per car, using whatever order is currently there
-  // (missing values sort last, ties broken by the table's own row order)
-  // as the starting point — a cleanup step after manually inserting
-  // someone with a fractional value like 1.5, not a way to choose the
-  // order itself. Assignments with no car set are left untouched, since
-  // "Ordning i bil" has no meaning without a car.
+  // "Sortera om bilordning" (Förberedelse tab) does two things:
+  // 1. Renumbers carOrder to a clean 1, 2, 3… per car, using whatever order
+  //    is currently there (missing values sort last, ties broken by the
+  //    table's own row order) — a cleanup step after manually inserting
+  //    someone with a fractional value like 2.1, not a way to choose the
+  //    order itself. Assignments with no car set keep their carOrder,
+  //    since "Ordning i bil" has no meaning without a car.
+  // 2. Re-sorts the table's rows (rewrites sortOrder) to match: car by car
+  //    (same car ordering as the Rapport), each car in its Ordning i bil,
+  //    and the posts without a car last, in their existing order. Without
+  //    this the button looked like it did nothing whenever the numbers were
+  //    already clean. Rows only move when this button is pressed, never
+  //    while typing, so they don't jump around mid-edit.
   function resortCarOrder(localId) {
+    const rows = assignmentsForDrive(localId);
     const byCar = new Map();
-    assignmentsForDrive(localId).forEach((pa) => {
+    const noCar = [];
+    rows.forEach((pa) => {
       const key = (pa.car || "").trim();
-      if (!key) return;
+      if (!key) { noCar.push(pa); return; }
       if (!byCar.has(key)) byCar.set(key, []);
       byCar.get(key).push(pa);
     });
-    byCar.forEach((list) => {
+    const cars = [...byCar.keys()].sort((a, b) => a.localeCompare(b, "sv", { numeric: true }));
+    const ordered = [];
+    cars.forEach((key) => {
+      const list = byCar.get(key);
       list.sort((a, b) => {
         const oa = a.carOrder == null ? Infinity : a.carOrder;
         const ob = b.carOrder == null ? Infinity : b.carOrder;
@@ -543,7 +554,12 @@
       });
       list.forEach((pa, idx) => {
         pa.carOrder = idx + 1;
+        ordered.push(pa);
       });
+    });
+    noCar.forEach((pa) => ordered.push(pa));
+    ordered.forEach((pa, idx) => {
+      pa.sortOrder = idx;
     });
   }
 
@@ -1137,8 +1153,9 @@
     resort: {
       t: "Sortera om bilordning",
       p: [
-        "Numrerar om ”Ordning i bil” till 1, 2, 3… för varje bil på det här såtet, utifrån nuvarande ordning. Pass utan tal hamnar sist, och lika tal behåller tabellens radordning.",
-        "Pass utan bil rörs inte. Övriga såt påverkas inte.",
+        "Sorterar raderna på det här såtet bil för bil (Buss 1, Buss 2 …), och inom varje bil efter ”Ordning i bil”. Samtidigt numreras ordningen om till 1, 2, 3… Pass utan tal hamnar sist i sin bil, och lika tal behåller tabellens radordning.",
+        "Pass utan bil läggs sist och får inget tal. Övriga såt påverkas inte.",
+        "Raderna flyttar sig bara när du trycker på knappen, aldrig medan du skriver.",
         "Kör den efter att du skrivit in t.ex. 2,1 för att slippa decimaltalen. Det är en städning — själva ordningen bestämmer du i tabellen.",
       ],
     },

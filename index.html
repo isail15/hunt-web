@@ -364,14 +364,24 @@
     padding: 12px;
   }
   /* Location photo (package field locationImageDataURL): top-left of the
-     Rapport header, title and rule stay centred. Only rendered when the
-     package has a photo, so without one the header is exactly as before. */
+     Rapport header, above the separating rule, with the title centred on
+     the photo's height (the rule is not part of that centring). Only
+     rendered when the package has a photo, so without one the header is
+     exactly as before. */
   .report-header {
     position: relative;
     min-height: 56px;
     display: flex;
-    flex-direction: column;
+    align-items: center;
     justify-content: center;
+  }
+  #reportRoot .report-header h2 {
+    margin: 0;
+    padding: 0 64px;
+    flex: 1 1 auto;
+  }
+  #reportRoot .report-header + .report-title-rule {
+    margin-top: 4px;
   }
   .report-header .report-location-img {
     position: absolute;
@@ -1815,7 +1825,7 @@
       // native report). The <img> is set through the DOM, never HTML.
       const header = document.createElement("div");
       header.className = "report-header";
-      header.innerHTML = headerHtml;
+      header.innerHTML = "<h2>" + escapeHtml(title) + "</h2>";
       const img = document.createElement("img");
       img.className = "report-location-img";
       img.alt = "";
@@ -1823,6 +1833,7 @@
       img.src = imgSrc;
       header.insertBefore(img, header.firstChild);
       root.appendChild(header);
+      root.insertAdjacentHTML("beforeend", "<hr class=\"report-title-rule\">");
     } else {
       root.innerHTML = headerHtml;
     }

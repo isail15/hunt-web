@@ -85,6 +85,16 @@ check is what stops two editors from silently overwriting each other (see
     "6b1f2e2a-0000-4000-8000-000000000001"
   ],
 
+  // The hunt Location's photo, as a complete data: URL ready for <img src>.
+  // OPTIONAL and often absent (no photo, unrecognised format, or over
+  // 700 KB — the native exporter's cap, so a package stays far below the
+  // drop box's 2,000,000-byte limit). The type is sniffed natively from the
+  // image bytes (PNG / JPEG / GIF / WebP / HEIC). EXPORT-ONLY: Location
+  // (name, uuid and photo) is HuntingJournal-authoritative, the web editor
+  // can't change a photo and the native importer ignores this field. The
+  // web Rapport shows it top-left of its header (see "Round-trip notes").
+  "locationImageDataURL": "data:image/png;base64,iVBORw0KGgo…",
+
   // Mirrors PostAssignment. Exactly one of hunterUUID / role / freeformName
   // should be set, matching the native rule that a slot is either a real
   // Hunter, one of the two fixed FunctionalRole values, or (web-editor-only,
@@ -134,6 +144,16 @@ check is what stops two editors from silently overwriting each other (see
   HuntManagement (`export` / `run`), with Codable DTOs mirroring the example
   above. Since 2026-09-29 its export includes `eventAttendees`, so real hunts
   narrow the Jägare list as intended.
+- **`locationImageDataURL` is display-only and never goes into a link.**
+  The web editor draws it in the Rapport header (top-left, 56 px, title and
+  rule stay centred; nothing is drawn when it is absent or isn't a base64
+  `data:image/{png,jpeg,gif,webp,heic,heif}` URL) and otherwise just carries
+  it through: it stays in the drop box payload, in saved files and in the
+  local autosave. Base64 of an image barely compresses, so it is **stripped
+  from the legacy `#d=` share link and the address-bar checkpoint**; a `#d=`
+  link therefore opens without the photo (the editor re-attaches it from its
+  own autosave slot when that holds the same `eventUUID`). `#d=` and `#h=`
+  payloads are deliberately not identical in this one field.
 - **Unknown fields survive the web editor.** It edits the loaded object in
   place and writes the whole thing back, so a field it doesn't know about
   (like `eventUUID`) comes back unchanged. Keep it that way: dropping

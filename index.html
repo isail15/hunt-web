@@ -1033,6 +1033,16 @@
     return !!(dropbox && state && stateHash() !== dropbox.syncedHash);
   }
 
+  // Dates shown to people (header, Rapport title, e-mail subject) read
+  // "24 okt 2026". The stored value stays ISO (2026-10-24), as do file names
+  // and the date field; anything that isn't a plain ISO date is shown as is.
+  const SV_MONTHS = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
+  function formatDate(iso) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ""));
+    if (!m || +m[2] < 1 || +m[2] > 12) return iso || "";
+    return +m[3] + " " + SV_MONTHS[+m[2] - 1] + " " + m[1];
+  }
+
   function formatWhen(iso) {
     const d = new Date(iso);
     if (isNaN(d)) return "";
@@ -1370,7 +1380,7 @@
     updateDropboxUi();
 
     document.getElementById("eventSummary").textContent = state
-      ? (state.event.locationName || "Okänd plats") + " — " + (state.event.date || "")
+      ? (state.event.locationName || "Okänd plats") + " — " + formatDate(state.event.date)
       : "Ingen jaktdag inläst";
 
     document.querySelectorAll("nav.tabs button").forEach((b) => {
@@ -1397,7 +1407,7 @@
       const v = el.value === "" ? null : el.value;
       obj[key] = parse ? parse(v) : v;
       document.getElementById("eventSummary").textContent =
-        (state.event.locationName || "Okänd plats") + " — " + (state.event.date || "");
+        (state.event.locationName || "Okänd plats") + " — " + formatDate(state.event.date);
       // This handler updates state directly without calling render() (typing
       // in a car/comment/date field shouldn't re-render the whole tab on
       // every keystroke), so it has to schedule the autosave itself —
@@ -2040,7 +2050,7 @@
     const titleParts = [];
     if (state.event.huntType) titleParts.push(state.event.huntType);
     titleParts.push(state.event.locationName || "");
-    const title = titleParts.join(", ") + " — " + (state.event.date || "");
+    const title = titleParts.join(", ") + " — " + formatDate(state.event.date);
     const headerHtml = "<h2>" + escapeHtml(title) + "</h2>";
     const imgSrc = locationImageSrc(state);
     if (imgSrc) {
@@ -2235,7 +2245,7 @@
       input.focus();
       input.select();
       const subject = "Uppdaterad jaktdag: " +
-        (state.event.locationName || "Okänd plats") + " — " + (state.event.date || "");
+        (state.event.locationName || "Okänd plats") + " — " + formatDate(state.event.date);
       const body =
         "Filen med mina ändringar (" + filename + ") har laddats ner till den här datorn.\n" +
         "Bifoga den filen här i mejlet innan du skickar.\n\n" +

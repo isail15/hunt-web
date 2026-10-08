@@ -428,16 +428,25 @@
     margin-bottom: 14px;
     break-inside: avoid;
   }
+  /* Three levels, told apart by KIND of emphasis rather than size (matches
+     the native sheet): drive = larger + semibold + a rule across the block,
+     car = italic only, rows = plain. The rule is a border on the heading
+     itself, and the gap to the first car heading is shortened by the same
+     3px (2px padding + 1px border), so the sheet is exactly as tall as
+     before. A dark solid colour so printers don't drop it. */
   .report-drive h3 {
     font-size: 13px;
-    margin: 0 0 4px;
+    margin: 0;
+    padding-bottom: 2px;
+    border-bottom: 1px solid var(--accent);
   }
   .report-group h4 {
     font-size: 12px;
-    text-decoration: underline;
-    font-weight: 600;
+    font-style: italic;
+    font-weight: 400;
     margin: 6px 0 2px;
   }
+  .report-drive h3 + .report-group h4 { margin-top: 3px; }
   .report-row {
     display: flex;
     gap: 6px;
@@ -543,6 +552,19 @@
     let l = numberLabel(post);
     if (post.type) l += " (" + post.type + ")";
     return l;
+  }
+
+  // Report notation only (matches the native sheet's Post.reportLabel): a
+  // tower post is written the way the hunt leader writes it, T110 / T6HS,
+  // instead of "110 (T)". Other types keep the ordinary label. A number that
+  // already starts with T (older, un-normalised names) isn't prefixed twice.
+  function reportLabel(post) {
+    const t = String(post.type || "").trim().toUpperCase();
+    if (t === "T") {
+      const n = numberLabel(post);
+      return /^T/i.test(n) ? n : "T" + n;
+    }
+    return displayLabel(post);
   }
 
   function findPost(postNumber, postCode) {
@@ -2086,7 +2108,7 @@
           const row = document.createElement("div");
           row.className = "report-row";
           row.innerHTML =
-            '<span class="rp">' + escapeHtml(displayLabel(post)) + "</span>" +
+            '<span class="rp">' + escapeHtml(reportLabel(post)) + "</span>" +
             '<span class="rn">' + escapeHtml(assigneeName(pa)) + "</span>" +
             '<span class="rc">' + escapeHtml(pa.comment || "") + "</span>";
           groupDiv.appendChild(row);

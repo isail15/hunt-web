@@ -381,8 +381,7 @@
     padding: 12px;
   }
   /* Location photo (package field locationImageDataURL): top-left of the
-     Rapport header, above the separating rule, with the title centred on
-     the photo's height (the rule is not part of that centring). Only
+     Rapport header with the title centred on the photo's height. Only
      rendered when the package has a photo, so without one the header is
      exactly as before. */
   .report-header {
@@ -397,9 +396,7 @@
     padding: 0 64px;
     flex: 1 1 auto;
   }
-  #reportRoot .report-header + .report-title-rule {
-    margin-top: 4px;
-  }
+  #reportRoot .report-header { margin-bottom: 14px; }
   .report-header .report-location-img {
     position: absolute;
     left: 0;
@@ -408,16 +405,13 @@
     width: 56px;
     object-fit: contain;
   }
+  /* No rule under the title any more (the drive headings carry the rules,
+     so a title rule would be a fourth line competing with them): the title
+     is just larger instead. */
   #reportRoot h2 {
-    font-size: 21px;
-    margin: 0 0 8px;
+    font-size: 26px;
+    margin: 0 0 14px;
     text-align: center;
-  }
-  #reportRoot .report-title-rule {
-    width: 75%;
-    margin: 0 auto 14px;
-    border: none;
-    border-top: 1px solid #bbb;
   }
   .report-grid {
     display: grid;
@@ -2047,10 +2041,10 @@
     if (state.event.huntType) titleParts.push(state.event.huntType);
     titleParts.push(state.event.locationName || "");
     const title = titleParts.join(", ") + " — " + (state.event.date || "");
-    const headerHtml = "<h2>" + escapeHtml(title) + "</h2><hr class=\"report-title-rule\">";
+    const headerHtml = "<h2>" + escapeHtml(title) + "</h2>";
     const imgSrc = locationImageSrc(state);
     if (imgSrc) {
-      // Photo top-left, title and rule centred beside it (mirrors the
+      // Photo top-left, title centred beside it (mirrors the
       // native report). The <img> is set through the DOM, never HTML.
       const header = document.createElement("div");
       header.className = "report-header";
@@ -2071,7 +2065,6 @@
       img.src = imgSrc;
       header.insertBefore(img, header.firstChild);
       root.appendChild(header);
-      root.insertAdjacentHTML("beforeend", "<hr class=\"report-title-rule\">");
     } else {
       root.innerHTML = headerHtml;
     }

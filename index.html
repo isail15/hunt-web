@@ -278,6 +278,23 @@
   .attendee-row input { width: auto; }
   table.assign [data-freeform] { margin-top: 4px; }
   #fileInput { display: none; }
+  .more-wrap { position: relative; display: inline-block; }
+  .more-menu {
+    display: none;
+    position: fixed;
+    z-index: 60;
+    min-width: 190px;
+    max-width: calc(100vw - 16px);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.18);
+    padding: 6px;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .more-menu.open { display: flex; }
+  .more-menu .btn { width: 100%; text-align: left; }
   .dropbox-status {
     display: none;
     width: 100%;
@@ -453,8 +470,12 @@
   <button class="btn" id="openBtn">Öppna fil…</button>
   <button class="btn" id="shareLinkBtn" disabled>Dela länk…</button>
   <button class="btn" id="sendBackBtn" disabled>Skicka tillbaka…</button>
-  <button class="btn" id="fetchLatestBtn" style="display:none">Hämta senaste</button>
+  <button class="btn" id="fetchLatestBtn" style="display:none" title="Hämtar den nyaste versionen från brevlådan">Hämta senaste</button>
   <button class="btn primary" id="saveBtn" disabled>Spara ändringar…</button>
+  <span class="more-wrap" id="moreWrap" style="display:none">
+    <button class="btn" id="moreBtn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="moreMenu">Mer ▾</button>
+    <div class="more-menu" id="moreMenu" role="menu"></div>
+  </span>
   <button type="button" class="help-btn" data-help="sync" aria-label="Hjälp: spara, skicka och dela" title="Hjälp">?</button>
   <div class="share-box" id="shareBox">
     <input type="text" id="shareLinkInput" readonly>
@@ -871,16 +892,23 @@
 
   const AUTOSAVE_KEY = "huntPackageAutosave";
   let autosaveTimer = null;
+  // "ok" = the browser-local draft matches the screen, "pending" = an edit
+  // is waiting for the debounce, "failed" = the browser refused to store it.
+  let draftState = "ok";
 
   function scheduleAutosave() {
     if (!state) return;
     clearTimeout(autosaveTimer);
+    draftState = "pending";
     autosaveTimer = setTimeout(() => {
       // Typing in plain fields doesn't re-render, so this debounced hook is
       // also what refreshes the drop box status ("ändringar ej skickade").
+      draftState = "saving";
       updateDropboxUi();
       doAutosave().catch(() => {
         // best-effort only — never interrupt editing over a failed autosave
+        draftState = "failed";
+        updateDropboxUi();
       });
     }, 800);
   }
@@ -893,6 +921,7 @@
   async function doAutosave() {
     if (!state) return;
     const encoded = await encodeStateForLink(state);
+    let stored = false;
     try {
       localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({
         v: 2,
@@ -906,9 +935,15 @@
             }
           : null,
       }));
+      stored = true;
     } catch (e) {
       // storage full/blocked (e.g. private browsing) — the URL-based
       // checkpoint below still works even if this one doesn't
+    }
+    // Only claim "ok" if no newer edit arrived while we were encoding.
+    if (draftState !== "pending") {
+      draftState = stored ? "ok" : "failed";
+      updateDropboxUi();
     }
     try {
       // A drop box hunt keeps its short, permanent #h= link in the address
@@ -1021,11 +1056,89 @@
     updateDropboxUi();
   }
 
+  // In drop box (link) mode the header is reduced to what a helper needs:
+  // Skicka in (primary), Hämta senaste, and a "Mer ▾" menu holding the file
+  // and link actions. Otherwise (no hunt, file, sample, old #d= link) the
+  // original row of buttons is shown. The same button elements are moved
+  // back and forth, so their handlers survive; the function is idempotent.
+  function layoutHeaderButtons(linkMode) {
+    const openB = document.getElementById("openBtn");
+    const shareB = document.getElementById("shareLinkBtn");
+    const sendB = document.getElementById("sendBackBtn");
+    const fetchB = document.getElementById("fetchLatestBtn");
+    const saveB = document.getElementById("saveBtn");
+    const wrap = document.getElementById("moreWrap");
+    const menu = document.getElementById("moreMenu");
+    const inMenu = menu.contains(saveB);
+    if (linkMode === inMenu) {
+      sendB.classList.toggle("primary", linkMode);
+      return;
+    }
+    closeMoreMenu();
+    if (linkMode) {
+      saveB.textContent = "Spara som fil…";
+      saveB.classList.remove("primary");
+      sendB.classList.add("primary");
+      menu.appendChild(shareB);
+      menu.appendChild(saveB);
+      menu.appendChild(openB);
+      wrap.style.display = "";
+    } else {
+      wrap.style.display = "none";
+      saveB.textContent = "Spara ändringar…";
+      saveB.classList.add("primary");
+      sendB.classList.remove("primary");
+      sendB.parentNode.insertBefore(openB, sendB);
+      sendB.parentNode.insertBefore(shareB, sendB);
+      wrap.parentNode.insertBefore(saveB, wrap);
+    }
+  }
+
+  function closeMoreMenu() {
+    const menu = document.getElementById("moreMenu");
+    const btn = document.getElementById("moreBtn");
+    if (!menu) return;
+    menu.classList.remove("open");
+    btn.setAttribute("aria-expanded", "false");
+  }
+
+  function openMoreMenu() {
+    const menu = document.getElementById("moreMenu");
+    const btn = document.getElementById("moreBtn");
+    menu.classList.add("open");
+    btn.setAttribute("aria-expanded", "true");
+    const r = btn.getBoundingClientRect();
+    const vw = document.documentElement.clientWidth;
+    let left = r.right - menu.offsetWidth;
+    left = Math.max(8, Math.min(left, vw - menu.offsetWidth - 8));
+    menu.style.left = left + "px";
+    menu.style.top = (r.bottom + 6) + "px";
+  }
+
+  document.getElementById("moreBtn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (document.getElementById("moreMenu").classList.contains("open")) closeMoreMenu();
+    else openMoreMenu();
+  });
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest || !e.target.closest("#moreWrap")) closeMoreMenu();
+    else if (e.target.closest("#moreMenu button")) closeMoreMenu();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && document.getElementById("moreMenu").classList.contains("open")) {
+      closeMoreMenu();
+      document.getElementById("moreBtn").focus();
+    }
+  });
+  window.addEventListener("resize", closeMoreMenu);
+  window.addEventListener("scroll", closeMoreMenu, { passive: true });
+
   function updateDropboxUi() {
     const sendBtn = document.getElementById("sendBackBtn");
     const fetchBtn = document.getElementById("fetchLatestBtn");
     const statusEl = document.getElementById("dropboxStatus");
     const banner = document.getElementById("dropboxBanner");
+    layoutHeaderButtons(!!dropbox);
     sendBtn.textContent = dropbox ? "Skicka in" : "Skicka tillbaka…";
     fetchBtn.style.display = dropbox ? "" : "none";
     sendBtn.disabled = !state || dropboxBusy;
@@ -1036,6 +1149,12 @@
     if (dropbox && state && isDirty() && kind !== "warn") {
       text = "Ändringar ej skickade (baserat på version " + dropbox.baseVersion + ").";
       kind = "";
+      if (draftState === "failed") {
+        text += " Det går inte att spara utkast i den här webbläsaren — skicka in eller spara som fil.";
+        kind = "warn";
+      } else if (draftState === "ok") {
+        text += " Utkastet är sparat i den här webbläsaren.";
+      }
     }
     statusEl.textContent = text;
     statusEl.className = "dropbox-status" + (text ? " visible" : "") + (kind ? " " + kind : "");
@@ -1282,10 +1401,9 @@
       p: [
         "Skicka in — skickar dina ändringar till Fredrik via brevlådan. Första gången frågar den efter ditt namn. Om någon annan hunnit ändra före dig skickas inget; hämta då senaste versionen först.",
         "Hämta senaste — hämtar den nyaste versionen från brevlådan. Har du osända ändringar frågar sidan först, eftersom de ersätts.",
-        "Spara ändringar… — laddar ner jaktdagen som en fil på din enhet, som säkerhetskopia eller om du saknar täckning.",
-        "Dela länk… — ger en länk som öppnar samma jaktdag.",
-        "Öppna fil… — läser in en sparad jaktdagsfil. (Skicka tillbaka… används för en jaktdag som öppnats från fil: den laddar ner filen och öppnar ett mejl.)",
-        "Ditt arbete sparas dessutom automatiskt i webbläsaren, så det finns kvar om du laddar om sidan.",
+        "Under Mer ▾: Dela länk… (en länk som öppnar samma jaktdag), Spara som fil… (laddar ner jaktdagen som en fil, som säkerhetskopia eller om du saknar täckning) och Öppna fil… (läser in en sparad jaktdagsfil).",
+        "Ditt arbete sparas automatiskt som ett utkast i den här webbläsaren tills du trycker Skicka in, så det finns kvar om du laddar om sidan eller stänger fliken. Utkastet följer inte med till en annan enhet eller webbläsare — då behöver du skicka in först.",
+        "En jaktdag som öppnats från fil har i stället knapparna Öppna fil…, Dela länk…, Skicka tillbaka… (laddar ner filen och öppnar ett mejl) och Spara ändringar….",
       ],
     },
     huntType: { t: "Jakttyp", p: ["Fritext, t.ex. Klövvilt. Står först i Rapportens rubrik: Jakttyp, Plats — datum."] },

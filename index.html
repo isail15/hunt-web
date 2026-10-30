@@ -196,6 +196,19 @@
     vertical-align: middle;
   }
   table.assign input, table.assign select { width: 100%; }
+  /* Hett (flame): a toggle in Förberedelse, a read-only mark in
+     Passfördelning. Same width either way so columns stay put. */
+  .hot-cell { width: 1%; white-space: nowrap; text-align: center; }
+  .hot-btn {
+    background: none; border: none; padding: 2px; margin: 0; cursor: pointer;
+    line-height: 0; border-radius: 4px; color: var(--muted); opacity: 0.55;
+  }
+  .hot-btn:hover { opacity: 1; }
+  .hot-btn:focus-visible { outline: 2px solid var(--accent); }
+  .hot-btn.on, .hot-btn.on:hover { color: #e8590c; opacity: 1; }
+  .hot-mark { display: inline-block; line-height: 0; color: #e8590c; vertical-align: -2px; margin-left: 4px; }
+  .hot-btn svg, .hot-mark svg { width: 20px; height: 20px; fill: currentColor; }
+  .hot-btn:not(.on) svg { fill: none; stroke: currentColor; stroke-width: 1.6; }
   .post-label {
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
@@ -1487,6 +1500,13 @@
         "Ordningen gäller inom varje bil, så två bilar kan båda ha en etta. Tomt = ingen ordning (räknas sist, och sorteras då efter postnummer). Rapporten följer ordningen, och den följer också med tillbaka till appen.",
       ],
     },
+    hot: {
+      t: "Hett",
+      p: [
+        "Markerar ett pass som hett. Klicka på flamman för att slå av eller på. Markeringen gäller just det här passet i den här såten och visas som en flamma i Passfördelning.",
+        "Den följer med tillbaka till appen när du skickar in. Den syns inte i rapporterna.",
+      ],
+    },
     addPost: {
       t: "Lägg till post",
       p: [
@@ -1699,6 +1719,31 @@
     return wrap;
   }
 
+  // "Hett" pass (PostAssignment.isHot). Absent = not hot as far as the web
+  // is concerned; the app decides what an absent value means for posts the
+  // web adds. Toggling writes an explicit true/false.
+  const HOT_FLAME_SVG =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.5 2.5c.6 3.3 4.7 5.3 4.7 10.2a5.2 5.2 0 0 1-10.4 0c0-1.9.8-3.4 1.9-4.6.2 1.5 1 2.5 2.2 2.8-.6-3.1-.3-6.2 1.6-8.4z"/></svg>';
+
+  function hotMarkHtml(pa) {
+    return pa.isHot === true ? '<span class="hot-mark" title="Hett pass" aria-label="Hett pass">' + HOT_FLAME_SVG + "</span>" : "";
+  }
+
+  function bindHotButton(btn, pa) {
+    const paint = () => {
+      const on = pa.isHot === true;
+      btn.classList.toggle("on", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      btn.title = on ? "Hett pass (klicka för att ta bort)" : "Markera som hett pass";
+    };
+    paint();
+    btn.onclick = () => {
+      pa.isHot = !(pa.isHot === true);
+      paint();
+      scheduleAutosave();
+    };
+  }
+
   function renderDriveCardSetup(ed, driveNumber, isFirst, isLast) {
     const card = document.createElement("div");
     card.className = "drive-card";
@@ -1745,7 +1790,7 @@
     table.className = "assign";
     table.innerHTML =
       "<thead><tr><th>Pass</th><th>Bil" + helpBtn("car") + "</th><th>Ordning i bil" + helpBtn("carOrder") +
-      "</th><th></th></tr></thead><tbody></tbody>";
+      "</th><th class=\"hot-cell\">Hett" + helpBtn("hot") + "</th><th></th></tr></thead><tbody></tbody>";
     const tbody = table.querySelector("tbody");
 
     assignmentsForDrive(ed.localId).forEach((pa) => {
@@ -1765,6 +1810,7 @@
         // decimal (e.g. to insert between 1 and 2) is fine since "Sortera om
         // bilordning" (resortCarOrder, above) cleans these up afterward.
         '<td><input type="text" inputmode="decimal" data-order style="width:70px" onfocus="this.select()"></td>' +
+        '<td class="hot-cell"><button type="button" class="hot-btn" data-hot>' + HOT_FLAME_SVG + "</button></td>" +
         '<td><button class="btn small danger" data-del>Ta bort</button></td>';
 
       const postCell = tr.querySelector("[data-post-cell]");
@@ -1787,6 +1833,7 @@
 
       bindPlainField(tr.querySelector("[data-car]"), pa, "car");
       bindPlainField(tr.querySelector("[data-order]"), pa, "carOrder", (v) => (v === null ? null : parseFloat(v.replace(",", "."))));
+      bindHotButton(tr.querySelector("[data-hot]"), pa);
       tr.querySelector("[data-del]").onclick = () => {
         state.postAssignments = state.postAssignments.filter((x) => x !== pa);
         render();
@@ -1902,7 +1949,7 @@
       const tr = document.createElement("tr");
       const freeformVisible = pa.assigneeType === "freeform";
       tr.innerHTML =
-        '<td class="post-label">' + escapeHtml(displayLabel(post)) + "</td>" +
+        '<td class="post-label">' + escapeHtml(displayLabel(post)) + hotMarkHtml(pa) + "</td>" +
         '<td class="readonly">' + escapeHtml(pa.car || "—") + "</td>" +
         '<td>' +
           '<select data-assignee>' + assigneeOptions(pa) + "</select>" +

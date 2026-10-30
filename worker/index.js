@@ -3,8 +3,18 @@
 // claude/hunt-drop-box-plan.md for why each choice was made.
 //
 // Config: R2 binding HUNTS; secret ADMIN_KEY; var ALLOWED_ORIGIN.
-// Expiry is an R2 lifecycle rule on the bucket (age counts from each write,
-// so a hunt that keeps being edited never expires) — see wrangler.toml notes.
+// Optional: a Cron Trigger (e.g. "15 3 * * *") runs scheduled() below,
+// which sweeps hunts past their expiresAt out of the bucket.
+//
+// Expiry, two layers:
+// - expiresAt (2026-10-30): the app sends the moment a hunt should stop
+//   existing — midnight after the day after the hunt, Swedish time. From
+//   then on every request for it answers 404 as if it had never been
+//   stored, and the object is deleted (on that request, or by the nightly
+//   sweep, whichever comes first). A PUT without expiresAt keeps the stored
+//   one, so the web editor, which never sends it, can't clear it.
+// - The R2 lifecycle rule on the bucket (400 days after the last write)
+//   still catches anything that never got an expiresAt.
 
 const TOKEN_RE = /^[A-Za-z0-9_-]{22}$/;
 const ROUTE_RE = /^\/h\/([A-Za-z0-9_-]{22})(\/meta)?$/;
@@ -31,12 +41,26 @@ function json(env, req, status, body) {
   });
 }
 
-const metaOf = (e) => ({ version: e.version, updatedAt: e.updatedAt, updatedBy: e.updatedBy });
+const metaOf = (e) => {
+  const m = { version: e.version, updatedAt: e.updatedAt, updatedBy: e.updatedBy };
+  if (e.expiresAt) m.expiresAt = e.expiresAt;
+  return m;
+};
 
+const isExpired = (e, now = Date.now()) =>
+  !!(e && e.expiresAt && Date.parse(e.expiresAt) <= now);
+
+// Reads the stored envelope. An expired one is deleted on the spot and
+// reported as absent, so nothing past its date is ever served or built on.
 async function readEnvelope(env, key) {
   const obj = await env.HUNTS.get(key);
   if (!obj) return { obj: null, env: null };
-  return { obj, env: JSON.parse(await obj.text()) };
+  const cur = JSON.parse(await obj.text());
+  if (isExpired(cur)) {
+    await env.HUNTS.delete(key);
+    return { obj: null, env: null };
+  }
+  return { obj, env: cur };
 }
 
 function timingSafeEqual(a, b) {
@@ -85,6 +109,13 @@ export default {
       if (!("payload" in body) || body.payload === null || typeof body.payload !== "object") {
         return json(env, req, 400, { error: "missing_payload" });
       }
+      let expiresAt;
+      if (body.expiresAt !== undefined && body.expiresAt !== null) {
+        if (typeof body.expiresAt !== "string" || Number.isNaN(Date.parse(body.expiresAt))) {
+          return json(env, req, 400, { error: "bad_expires_at" });
+        }
+        expiresAt = new Date(Date.parse(body.expiresAt)).toISOString();
+      }
       const updatedBy = typeof body.updatedBy === "string" && body.updatedBy.trim()
         ? body.updatedBy.trim().slice(0, MAX_NAME) : "okänd";
 
@@ -99,8 +130,13 @@ export default {
         updatedBy,
         payload: body.payload,
       };
+      const keepExpiry = expiresAt ?? (cur ? cur.expiresAt : undefined);
+      if (keepExpiry) next.expiresAt = keepExpiry;
       const written = await env.HUNTS.put(key, JSON.stringify(next), {
         httpMetadata: { contentType: "application/json" },
+        // Mirrored into R2 metadata so the nightly sweep can find expired
+        // hunts from a listing, without opening every object.
+        customMetadata: keepExpiry ? { expiresAt: keepExpiry } : {},
         onlyIf: existing ? { etagMatches: existing.etag } : { etagDoesNotMatch: "*" },
       });
       if (written === null) {
@@ -121,5 +157,22 @@ export default {
     }
 
     return json(env, req, 405, { error: "method_not_allowed" });
+  },
+
+  // Nightly sweep (only runs if a Cron Trigger is configured). Deletes every
+  // hunt whose expiresAt has passed, so expired hunts actually leave the
+  // bucket even if nobody opens their link again.
+  async scheduled(event, env, ctx) {
+    const now = Date.now();
+    let cursor;
+    do {
+      const page = await env.HUNTS.list({ prefix: "h/", cursor, include: ["customMetadata"] });
+      const expired = page.objects
+        .filter((o) => o.customMetadata && o.customMetadata.expiresAt
+          && Date.parse(o.customMetadata.expiresAt) <= now)
+        .map((o) => o.key);
+      if (expired.length) await env.HUNTS.delete(expired);
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
   },
 };

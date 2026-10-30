@@ -656,7 +656,10 @@
     return state.hunters.find((h) => h.uuid === u);
   }
 
-  function assigneeName(pa) {
+  // blankIfNone: the reports print an unassigned post as an empty line, not
+  // as text, so a gap is obvious at a glance. The editor screens keep the
+  // words "Ej tilldelad".
+  function assigneeName(pa, blankIfNone) {
     if (pa.assigneeType === "hunter" && pa.hunterUUID) {
       const h = hunterByUUID(pa.hunterUUID);
       return h ? h.name : "Okänd jägare";
@@ -668,7 +671,7 @@
       // it still needs to be reconciled with a real Hunter record.
       return pa.freeformName + " (ny, ej i systemet)";
     }
-    return "Ej tilldelad";
+    return blankIfNone ? "" : "Ej tilldelad";
   }
 
   // driveOrder is only ever a relative sort key, never a display-ready
@@ -2140,7 +2143,7 @@
           const row = document.createElement("div");
           row.className = "m-row";
           const rp = document.createElement("span"); rp.className = "rp"; rp.textContent = reportLabel(post);
-          const rn = document.createElement("span"); rn.className = "rn"; rn.textContent = assigneeName(pa);
+          const rn = document.createElement("span"); rn.className = "rn"; rn.textContent = assigneeName(pa, true);
           row.appendChild(rp); row.appendChild(rn);
           if (pa.comment) {
             const rc = document.createElement("span"); rc.className = "rc"; rc.textContent = pa.comment;
@@ -2298,7 +2301,7 @@
           row.className = "report-row";
           row.innerHTML =
             '<span class="rp">' + escapeHtml(reportLabel(post)) + "</span>" +
-            '<span class="rn">' + escapeHtml(assigneeName(pa)) + "</span>" +
+            '<span class="rn">' + escapeHtml(assigneeName(pa, true)) + "</span>" +
             '<span class="rc">' + escapeHtml(pa.comment || "") + "</span>";
           groupDiv.appendChild(row);
         });

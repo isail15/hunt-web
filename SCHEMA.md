@@ -112,6 +112,7 @@ check is what stops two editors from silently overwriting each other (see
       "car": "Buss",                 // PostAssignment.car, free text
       "carOrder": null,              // PostAssignment.carOrder — carried through, not yet used by this editor's report (matches native: report ignores carOrder today too)
       "comment": null,               // PostAssignment.comment — the result
+      "isHot": false,                // PostAssignment.isHot ("Hett"), optional Bool. Absent = the sender didn't say (the web editor adds new passes without it; the app decides, e.g. from the last day this såt/post was used). The web editor shows it (Passfördelning) and lets it be toggled (Förberedelse), writing an explicit true/false; reports ignore it.
       "sortOrder": 0
     }
   ]

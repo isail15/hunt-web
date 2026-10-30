@@ -84,7 +84,9 @@
     gap: 4px;
     padding: 10px 20px 0;
     background: var(--bg-alt);
+    overflow-x: auto;
   }
+  nav.tabs button { flex: none; white-space: nowrap; }
   nav.tabs button {
     border-radius: 8px 8px 0 0;
     border-bottom: none;
@@ -454,6 +456,11 @@
   .report-row .rn { flex: 1; }
   .report-row .rc { color: #444; }
 
+  @media (max-width: 600px) {
+    main { padding: 12px; }
+    nav.tabs { padding: 8px 12px 0; }
+  }
+
   @media print {
     .no-print, .help-btn, #helpPop { display: none !important; }
     body { background: white; }
@@ -498,6 +505,7 @@
   <button data-tab="setup" class="active">Förberedelse</button>
   <button data-tab="assign">Passfördelning</button>
   <button data-tab="report">Rapport</button>
+  <button data-tab="mobile">Mobilrapport</button>
 </nav>
 
 <main>
@@ -565,6 +573,19 @@
     return state.posts.find(
       (p) => p.postNumber === postNumber && (p.code || "") === (postCode || "")
     );
+  }
+
+  // Rapport order inside one car: "Ordning i bil" first (lowest first), rows
+  // without a number after all numbered ones, and ties (or no numbers at
+  // all) fall back to the post number. Matches the app's own "by car" sort.
+  function compareInCar(a, b) {
+    const num = (v) => (v == null || v === "" || isNaN(Number(v)) ? null : Number(v));
+    const oa = num(a.carOrder);
+    const ob = num(b.carOrder);
+    if (oa !== null && ob === null) return -1;
+    if (oa === null && ob !== null) return 1;
+    if (oa !== null && ob !== null && oa !== ob) return oa - ob;
+    return comparePosts(a, b);
   }
 
   function comparePosts(a, b) {
@@ -1398,6 +1419,7 @@
 
     if (ui.tab === "setup") renderSetup(app);
     else if (ui.tab === "assign") renderAssign(app);
+    else if (ui.tab === "mobile") renderMobileReport(app);
     else renderReport(app);
   }
 
@@ -1459,7 +1481,7 @@
       p: [
         "Turordningen inom bilen: i vilken ordning jägarna stiger av, så som de sitter i bussen. Lägst tal först.",
         "Ska ett pass in mellan 2 och 3? Skriv 2,1 — då hamnar det däremellan. Tryck sedan på Sortera om bilordning för att få rena tal 1, 2, 3…",
-        "Ordningen gäller inom varje bil, så två bilar kan båda ha en etta. Tomt = ingen ordning (räknas sist). Rapporten sorteras än så länge efter postnummer, men ordningen följer med tillbaka till appen.",
+        "Ordningen gäller inom varje bil, så två bilar kan båda ha en etta. Tomt = ingen ordning (räknas sist, och sorteras då efter postnummer). Rapporten följer ordningen, och den följer också med tillbaka till appen.",
       ],
     },
     addPost: {
@@ -2033,6 +2055,187 @@
 
   // ---- Report tab: printable assignment sheet, grouped by car ----
 
+  // One drive's assignments grouped by car, in report order: cars sorted
+  // numeric-aware with "no car" last, rows inside a car by Ordning i bil.
+  // Shared by the Rapport and the Mobilrapport so they can never disagree.
+  function reportGroupsForDrive(ed) {
+    const groups = new Map();
+    assignmentsForDrive(ed.localId).forEach((pa) => {
+      const key = (pa.car || "").trim();
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(pa);
+    });
+    const keys = [...groups.keys()].sort((a, b) => {
+      if (a === "" && b === "") return 0;
+      if (a === "") return 1;
+      if (b === "") return -1;
+      return a.localeCompare(b, "sv", { numeric: true });
+    });
+    return keys.map((key) => ({ key: key, items: groups.get(key).slice().sort(compareInCar) }));
+  }
+
+  function reportTitle() {
+    const titleParts = [];
+    if (state.event.huntType) titleParts.push(state.event.huntType);
+    titleParts.push(state.event.locationName || "");
+    return titleParts.join(", ") + " — " + formatDate(state.event.date);
+  }
+
+  // Mobilrapport: same content as the Rapport as a single column for a phone.
+  // Its CSS lives here (not in the page <style>) because the downloadable
+  // standalone file embeds exactly the same rules.
+  const MOBILE_REPORT_CSS = `
+  #mobileReport { max-width: 560px; margin: 0 auto; font-size: 16px; line-height: 1.35; }
+  #mobileReport h2 { font-size: 22px; margin: 4px 0 14px; text-align: center; }
+  #mobileReport .m-drive { margin-bottom: 22px; }
+  #mobileReport .m-drive h3 {
+    font-size: 17px;
+    margin: 0 0 6px;
+    padding-bottom: 3px;
+    border-bottom: 1px solid var(--accent);
+  }
+  #mobileReport .m-drive h4 { font-size: 16px; font-style: italic; font-weight: 400; margin: 10px 0 2px; }
+  #mobileReport .m-row {
+    display: grid;
+    grid-template-columns: var(--m-pw, 4.2em) 1fr;
+    column-gap: 10px;
+    padding: 5px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  #mobileReport .m-row .rp { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+  #mobileReport .m-row .rc { grid-column: 2; color: var(--muted); font-size: 14px; }
+  #mobileReport .m-empty { color: var(--muted); font-size: 14px; margin: 4px 0; }
+  #mobileReport .m-foot { margin: 18px 0 0; color: var(--muted); font-size: 13px; text-align: center; }
+`;
+  const mobileStyle = document.createElement("style");
+  mobileStyle.textContent = MOBILE_REPORT_CSS;
+  document.head.appendChild(mobileStyle);
+
+  function buildMobileReport() {
+    const root = document.createElement("div");
+    root.id = "mobileReport";
+    const h2 = document.createElement("h2");
+    h2.textContent = reportTitle();
+    root.appendChild(h2);
+    orderedEventDrives().forEach((ed, idx) => {
+      const block = document.createElement("section");
+      block.className = "m-drive";
+      const h3 = document.createElement("h3");
+      h3.textContent = "Såt " + (idx + 1) + ": " + ed.driveName +
+        (ed.reassemblyPoint ? " — Återsamling: " + ed.reassemblyPoint : "");
+      block.appendChild(h3);
+      const groups = reportGroupsForDrive(ed);
+      if (!groups.length) {
+        const e = document.createElement("div");
+        e.className = "m-empty";
+        e.textContent = "Inga pass.";
+        block.appendChild(e);
+      }
+      groups.forEach(({ key, items }) => {
+        const h4 = document.createElement("h4");
+        h4.textContent = key === "" ? "Utan fordon" : key;
+        block.appendChild(h4);
+        items.forEach((pa) => {
+          const post = findPost(pa.postNumber, pa.postCode) || { postNumber: pa.postNumber, code: pa.postCode };
+          const row = document.createElement("div");
+          row.className = "m-row";
+          const rp = document.createElement("span"); rp.className = "rp"; rp.textContent = reportLabel(post);
+          const rn = document.createElement("span"); rn.className = "rn"; rn.textContent = assigneeName(pa);
+          row.appendChild(rp); row.appendChild(rn);
+          if (pa.comment) {
+            const rc = document.createElement("span"); rc.className = "rc"; rc.textContent = pa.comment;
+            row.appendChild(rc);
+          }
+          block.appendChild(row);
+        });
+      });
+      root.appendChild(block);
+    });
+    return root;
+  }
+
+  // Post column as wide as the widest label so names line up in every row.
+  // Needs the report to be in the document to measure.
+  function fitMobileColumn(root) {
+    let max = 0;
+    root.querySelectorAll(".m-row .rp").forEach((el) => {
+      el.style.width = "max-content";
+      max = Math.max(max, el.getBoundingClientRect().width);
+      el.style.width = "";
+    });
+    if (max > 0) root.style.setProperty("--m-pw", Math.ceil(max) + 2 + "px");
+  }
+
+  function renderMobileReport(app) {
+    const wrap = document.createElement("div");
+    const bar = document.createElement("div");
+    bar.className = "no-print";
+    bar.style.cssText = "max-width:560px;margin:0 auto 14px;";
+    const dl = document.createElement("button");
+    dl.className = "btn primary";
+    dl.textContent = "Ladda ner som fil";
+    dl.onclick = downloadMobileReport;
+    const hint = document.createElement("div");
+    hint.style.cssText = "color:var(--muted);font-size:13px;margin-top:6px;";
+    hint.textContent = "En fil att skicka till deltagarna. Den fungerar utan uppkoppling och visar läget just nu; ändrar du något efteråt behöver du skicka en ny.";
+    bar.appendChild(dl);
+    bar.appendChild(hint);
+    wrap.appendChild(bar);
+    const root = buildMobileReport();
+    wrap.appendChild(root);
+    app.innerHTML = "";
+    app.appendChild(wrap);
+    fitMobileColumn(root);
+  }
+
+  function mobileReportFileName() {
+    const parts = [];
+    if (state.event.locationName) parts.push(state.event.locationName);
+    if (state.event.date) parts.push(state.event.date);
+    const slug = parts.join("-").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    return "rapport-" + (slug || "jaktdag") + ".html";
+  }
+
+  // The whole report as one self-contained HTML document: inline CSS, no
+  // script, no external requests, so it opens offline on any phone.
+  function buildMobileReportFile() {
+    const holder = document.createElement("div");
+    holder.style.cssText = "position:absolute;left:-9999px;top:0;width:480px;visibility:hidden;";
+    const root = buildMobileReport();
+    const foot = document.createElement("p");
+    foot.className = "m-foot";
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    foot.textContent = "Sammanställd " + formatDate(now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate())) +
+      " " + pad(now.getHours()) + ":" + pad(now.getMinutes()) + ".";
+    root.appendChild(foot);
+    holder.appendChild(root);
+    document.body.appendChild(holder);
+    fitMobileColumn(root);
+    const html = root.outerHTML;
+    holder.remove();
+    return "<!doctype html>\n<html lang=\"sv\"><head><meta charset=\"utf-8\">" +
+      "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
+      "<title>" + escapeHtml(reportTitle()) + "</title><style>" +
+      ":root{--accent:#2e5e3e;--border:#d8d8d8;--muted:#6b6b6b;color-scheme:light dark}" +
+      "body{margin:0;padding:14px;background:#fff;color:#1c1c1c;font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",Helvetica,Arial,sans-serif}" +
+      "@media(prefers-color-scheme:dark){:root{--accent:#7fbf94;--border:#3a3a3a;--muted:#a0a0a0}body{background:#111;color:#eee}}" +
+      MOBILE_REPORT_CSS + "</style></head><body>" + html + "</body></html>\n";
+  }
+
+  function downloadMobileReport() {
+    const blob = new Blob([buildMobileReportFile()], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = mobileReportFileName();
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   function renderReport(app) {
     const wrap = document.createElement("div");
 
@@ -2047,10 +2250,7 @@
     root.id = "reportRoot";
     // "HuntType, Location — date" — huntType is omitted entirely when unset
     // rather than leaving a stray ", " in front of the location.
-    const titleParts = [];
-    if (state.event.huntType) titleParts.push(state.event.huntType);
-    titleParts.push(state.event.locationName || "");
-    const title = titleParts.join(", ") + " — " + formatDate(state.event.date);
+    const title = reportTitle();
     const headerHtml = "<h2>" + escapeHtml(title) + "</h2>";
     const imgSrc = locationImageSrc(state);
     if (imgSrc) {
@@ -2088,25 +2288,11 @@
       const rally = ed.reassemblyPoint ? " — Återsamling: " + escapeHtml(ed.reassemblyPoint) : "";
       block.innerHTML = "<h3>Såt " + (idx + 1) + ": " + escapeHtml(ed.driveName) + rally + "</h3>";
 
-      const groups = new Map();
-      assignmentsForDrive(ed.localId).forEach((pa) => {
-        const key = (pa.car || "").trim();
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key).push(pa);
-      });
-
-      const keys = [...groups.keys()].sort((a, b) => {
-        if (a === "" && b === "") return 0;
-        if (a === "") return 1;
-        if (b === "") return -1;
-        return a.localeCompare(b, "sv", { numeric: true });
-      });
-
-      keys.forEach((key) => {
+      reportGroupsForDrive(ed).forEach(({ key, items }) => {
         const groupDiv = document.createElement("div");
         groupDiv.className = "report-group";
         groupDiv.innerHTML = "<h4>" + (key === "" ? "Utan fordon" : escapeHtml(key)) + "</h4>";
-        groups.get(key).sort(comparePosts).forEach((pa) => {
+        items.forEach((pa) => {
           const post = findPost(pa.postNumber, pa.postCode) || { postNumber: pa.postNumber, code: pa.postCode };
           const row = document.createElement("div");
           row.className = "report-row";

@@ -211,8 +211,8 @@ when the package format above changes.
 | Request | Success | Other outcomes |
 |---|---|---|
 | `GET /h/<token>` | **200** the whole envelope | **404** `{"error":"not_found"}` if nothing is stored |
-| `GET /h/<token>/meta` | **200** `{"version","updatedAt","updatedBy"}` (no payload) | **404** as above |
-| `PUT /h/<token>` body `{"baseVersion":N,"updatedBy":"…","payload":{…}}` | **200** `{"version":N+1}` | **409** conflict, **400**, **413** (see below) |
+| `GET /h/<token>/meta` | **200** `{"version","updatedAt","updatedBy"}` plus `"expiresAt"` when the hunt has one (no payload) | **404** as above |
+| `PUT /h/<token>` body `{"baseVersion":N,"updatedBy":"…","payload":{…}}` and optionally `"expiresAt":"<ISO 8601>"` | **200** `{"version":N+1}` | **409** conflict, **400**, **413** (see below) |
 | `DELETE /h/<token>` with header `X-Admin-Key` | **200** `{"deleted":true}` | **403** `{"error":"forbidden"}` without the right key |
 
 Use `Content-Type: application/json` on PUT. Every response is JSON with
@@ -245,11 +245,35 @@ other method gives **405** `method_not_allowed`.
 | 400 | `bad_body` | body is JSON but not an object |
 | 400 | `bad_base_version` | `baseVersion` present but not a non-negative integer |
 | 400 | `missing_payload` | `payload` missing, null, or not an object |
+| 400 | `bad_expires_at` | `expiresAt` present but not a parseable date string |
 | 403 | `forbidden` | DELETE without the correct `X-Admin-Key` |
-| 404 | `not_found` | nothing stored for this token, malformed token, or unknown path |
+| 404 | `not_found` | nothing stored for this token (never created, deleted, or expired), malformed token, or unknown path |
 | 405 | `method_not_allowed` | e.g. PUT on `/meta` |
 | 409 | `conflict` | stale `baseVersion` (body carries the current meta, see above) |
 | 413 | `too_large` | body over 2,000,000 bytes (a real hunt is ~40 KB) |
+
+### Expiry (added 2026-10-30)
+
+A hunt can be given an end of life so it doesn't sit in the bucket after the
+hunt day.
+
+- `expiresAt` is an optional PUT field (ISO 8601 string; stored normalised to
+  UTC with milliseconds). The native app sends it on every publish: midnight
+  at the end of the day *after* the hunt, Swedish time.
+- A PUT **without** `expiresAt` keeps the stored one. The web editor never
+  sends the field, so it can neither set nor clear an expiry.
+- The stored envelope and `GET /h/<token>` / `GET /h/<token>/meta` carry
+  `expiresAt` when there is one.
+- From that moment the hunt behaves as if it had never been stored: GET and
+  `/meta` answer **404**, and a PUT with a stale `baseVersion` answers **409**
+  with `"version":0` (so a client that still holds the old version can
+  re-create it with `baseVersion` 0). The object is deleted on the first such
+  request, or by the nightly sweep (`scheduled()`, only if a Cron Trigger such
+  as `15 3 * * *` UTC is configured), whichever comes first.
+- The R2 lifecycle rule (400 days after the last write) remains as the
+  fallback for hunts that never got an `expiresAt`.
+- Backward compatible both ways: an older Worker ignores `expiresAt`; an older
+  client sends none and gets no expiry.
 
 ### Operational rules
 

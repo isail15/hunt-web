@@ -1626,6 +1626,7 @@
       p: [
         "Vilken bil eller buss jägaren åker i till posten. Skriv fritt (t.ex. Buss 1) eller välj ett tidigare värde ur listan.",
         "I Rapporten grupperas passen efter bil. Är fältet tomt hör passet inte till någon bil.",
+        "Klicka på rubriken Pass eller Bil för att sortera listan. Ett andra klick vänder ordningen, ett tredje återställer. Samma sortering gäller i Passfördelning. Den ändrar bara hur listan visas, inte något i jakten. Raderna flyttar sig när du klickar på rubriken eller trycker Sortera om bilordning, aldrig medan du skriver.",
       ],
     },
     carOrder: {
@@ -2003,11 +2004,20 @@
     const table = document.createElement("table");
     table.className = "assign";
     table.innerHTML =
-      "<thead><tr><th>Pass</th><th>Bil" + helpBtn("car") + "</th><th>Ordning i bil" + helpBtn("carOrder") +
+      "<thead><tr>" + sortHeaderHtml("post", "Pass") + sortHeaderHtml("car", "Bil", helpBtn("car")) +
+      "<th>Ordning i bil" + helpBtn("carOrder") +
       "</th><th class=\"hot-cell\">Hett" + helpBtn("hot") + "</th><th></th></tr></thead><tbody></tbody>";
     const tbody = table.querySelector("tbody");
+    // Same clickable Pass / Bil headers as Passfördelning, and the same
+    // choice: sorting one tab sorts the other.
+    table.querySelectorAll("[data-sort]").forEach((btn) => {
+      btn.onclick = () => {
+        clickAssignSort(btn.dataset.sort);
+        render();
+      };
+    });
 
-    assignmentsForDrive(ed.localId).forEach((pa) => {
+    sortedAssignRows(assignmentsForDrive(ed.localId)).forEach((pa) => {
       const tr = document.createElement("tr");
       // post is the real catalog object (a reference into state.posts) so
       // it can be edited in place; the fallback (no match found — should

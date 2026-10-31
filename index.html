@@ -198,6 +198,7 @@
   table.assign input, table.assign select { width: 100%; }
   /* Hett (flame): a toggle in Förberedelse, a read-only mark in
      Passfördelning. Same width either way so columns stay put. */
+  .field input:disabled { background: var(--bg-alt); color: var(--muted); cursor: not-allowed; opacity: 1; }
   .same-car-box { margin: 0 0 14px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-alt); }
   .same-car-box .sc-title { display: flex; align-items: center; gap: 6px; font-weight: 600; }
   .same-car-box .sc-list { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px; font-size: 13px; }
@@ -1606,7 +1607,7 @@
         "En jaktdag som öppnats från fil har i stället knapparna Öppna fil…, Dela länk…, Skicka tillbaka… (laddar ner filen och öppnar ett mejl) och Spara ändringar….",
       ],
     },
-    huntType: { t: "Jakttyp", p: ["Fritext, t.ex. Klövvilt. Står först i Rapportens rubrik: Jakttyp, Plats — datum."] },
+    huntType: { t: "Jakttyp", p: ["Står först i Rapportens rubrik: Jakttyp, Plats — datum. Kommer från appen och kan inte ändras här."] },
     comment: { t: "Kommentar", p: ["Egen anteckning om jaktdagen. Visas inte i Rapporten."] },
     rally: {
       t: "Återsamlingsplats",
@@ -1823,6 +1824,18 @@
       '<label class="field"><span>Kommentar' + helpBtn("comment") + '</span><input data-f="comment" type="text"></label>';
     wrap.appendChild(grid);
     grid.querySelectorAll("input").forEach((el) => bindPlainField(el, state.event, el.dataset.f));
+    // Datum, Plats and Jakttyp identify the hunt and come from the app: they
+    // are shown but locked here, so a helper can't turn the hunt into a
+    // different one by editing them. Kommentar stays editable.
+    grid.querySelectorAll("[data-f=date], [data-f=locationName], [data-f=huntType]").forEach((el) => {
+      el.disabled = true;
+      el.title = "Kommer från appen och kan inte ändras här";
+    });
+    const lockHint = document.createElement("div");
+    lockHint.className = "hint";
+    lockHint.style.margin = "-6px 0 14px";
+    lockHint.textContent = "Datum, plats och jakttyp kommer från appen och kan inte ändras här. Ändra dem i appen och skicka jakten igen.";
+    wrap.appendChild(lockHint);
 
     wrap.appendChild(renderSameCarBox());
 

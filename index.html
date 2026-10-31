@@ -1138,6 +1138,292 @@
     return { v: 1, encoded: raw, dropbox: null };
   }
 
+  // ---------- three-way merge ----------
+  //
+  // Reference implementation, verbatim from claude/hunt-web-brief-2026-10-31-merge.md
+  // (shared with the app's HuntPackageMerge.swift). Do not change the rules
+  // here first: change the brief's reference, then the app, then this copy.
+  const HuntMerge = (() => {
+// Three-way merge of hunt packages (SCHEMA.md v1) — reference implementation.
+// Shared contract between hunt-web (JS) and HuntManagement (Swift port in
+// HuntPackageMerge.swift). Both sides MUST produce the same result.
+//
+// mergePackages(base, local, remote) -> { merged, notes }
+//   base   = the package this side last fetched or published (the version
+//            its edits started from)
+//   local  = this side's current package (with unpublished edits)
+//   remote = what the drop box holds now (someone else published since base)
+//
+// Rule for every single value: if only one side changed it relative to base,
+// that change wins; if both changed it to the same thing, fine; if both
+// changed it differently, LOCAL wins (the one merging now is the latest) and
+// a note is recorded.
+//
+// Identity (localIds and pa ids are regenerated on every export, so they
+// can't be used):
+//   eventDrive      -> driveName
+//   postAssignment  -> driveName + postNumber + postCode (+ occurrence index
+//                      for the rare duplicate)
+//   catalog drives  -> name; posts -> postNumber+code; hunters -> uuid
+//   attendees       -> hunter uuid
+
+// null and a missing value are the same thing (the app leaves fields out,
+// the web may write null).
+function deepEqual(a, b) {
+  if (a === b) return true;
+  if (a == null || b == null) return a == null && b == null;
+  if (typeof a !== typeof b) return false;
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((x, i) => deepEqual(x, b[i]));
+  }
+  if (typeof a === "object") {
+    const ka = Object.keys(a).filter((k) => a[k] != null).sort();
+    const kb = Object.keys(b).filter((k) => b[k] != null).sort();
+    if (!deepEqual(ka, kb)) return false;
+    return ka.every((k) => deepEqual(a[k], b[k]));
+  }
+  return false;
+}
+
+// Returns [value, conflict?]
+function pick3(base, local, remote) {
+  if (deepEqual(local, base)) return [remote, false];
+  if (deepEqual(remote, base)) return [local, false];
+  if (deepEqual(local, remote)) return [local, false];
+  return [local, true];
+}
+
+function setField(obj, key, value) {
+  if (value == null) delete obj[key];
+  else obj[key] = value;
+}
+
+// Swedish names for the notes.
+const LABEL = {
+  date: "datum", locationName: "plats", huntType: "jakttyp", comment: "kommentar",
+  sameCarAllDay: "samma bil hela dagen", carRuleExceptions: "räknas som bil",
+  car: "bil", carOrder: "ordning i bil", isHot: "hett", reassemblyPoint: "återsamlingsplats",
+};
+const PA_LABEL = { ...LABEL, comment: "resultat" };
+
+// The app and the web write the same thing slightly differently. Before
+// comparing, bring all three packages to one form so a difference in
+// spelling never looks like an edit:
+// - empty text = no text (removed)
+// - a missing isHot = false; a missing sameCarAllDay = false
+// - a missing carRuleExceptions = []; a missing eventAttendeeDayCars = {}
+const TEXT_EVENT = ["locationName", "huntType", "comment"];
+const TEXT_PA = ["car", "comment"];
+function normalize(pkg) {
+  const p = JSON.parse(JSON.stringify(pkg || {}));
+  p.event = p.event || {};
+  for (const f of TEXT_EVENT) if (p.event[f] === "") delete p.event[f];
+  if (p.event.sameCarAllDay == null) p.event.sameCarAllDay = false;
+  if (p.event.carRuleExceptions == null) p.event.carRuleExceptions = [];
+  if (p.eventAttendeeDayCars == null) p.eventAttendeeDayCars = {};
+  for (const ed of p.eventDrives || []) if (ed.reassemblyPoint === "") delete ed.reassemblyPoint;
+  for (const pa of p.postAssignments || []) {
+    for (const f of TEXT_PA) if (pa[f] === "") delete pa[f];
+    if (pa.isHot == null) pa.isHot = false;
+  }
+  return p;
+}
+
+const EVENT_FIELDS = ["date", "locationName", "huntType", "comment", "sameCarAllDay", "carRuleExceptions"];
+const ED_FIELDS = ["driveOrder", "reassemblyPoint"];
+const PA_FIELDS = ["car", "carOrder", "comment", "sortOrder", "isHot"];
+
+function driveNameByLocalId(pkg) {
+  const m = new Map();
+  for (const ed of pkg?.eventDrives || []) m.set(ed.localId, ed.driveName);
+  return m;
+}
+
+// [{key, driveName, pa}] in package order
+function keyedAssignments(pkg) {
+  const names = driveNameByLocalId(pkg);
+  const seen = new Map();
+  const out = [];
+  for (const pa of pkg?.postAssignments || []) {
+    const driveName = names.get(pa.eventDriveLocalId);
+    if (driveName === undefined) continue;
+    const baseKey = [driveName, pa.postNumber, pa.postCode || ""].join("\u0001");
+    const n = seen.get(baseKey) || 0;
+    seen.set(baseKey, n + 1);
+    out.push({ key: baseKey + "\u0001" + n, driveName, pa });
+  }
+  return out;
+}
+
+const assigneeOf = (pa) => ({ assigneeType: pa.assigneeType ?? null, hunterUUID: pa.hunterUUID ?? null, role: pa.role ?? null });
+
+function unionCatalog(local, remote, keyFn) {
+  if (local === undefined && remote === undefined) return undefined;
+  const out = [...(local || [])];
+  const keys = new Set(out.map(keyFn));
+  for (const item of remote || []) {
+    const k = keyFn(item);
+    if (!keys.has(k)) { out.push(item); keys.add(k); }
+  }
+  return out;
+}
+
+function mergeSet(base, local, remote) {
+  if (local === undefined && remote === undefined) return undefined;
+  const B = new Set(base || []), L = new Set(local || []), R = new Set(remote || []);
+  const out = [];
+  for (const x of [...(local || []), ...(remote || [])]) {
+    if (out.includes(x)) continue;
+    const keep = (L.has(x) && R.has(x)) || (!B.has(x) && (L.has(x) || R.has(x)));
+    if (keep) out.push(x);
+  }
+  return out;
+}
+
+function mergePackages(baseIn, localIn, remoteIn) {
+  const base = normalize(baseIn), local = normalize(localIn), remote = normalize(remoteIn);
+  const notes = [];
+  const merged = { ...remote, ...local }; // top-level unknown fields: local wins, remote fills gaps
+
+  // Event fields
+  const ev = { ...(remote.event || {}), ...(local.event || {}) };
+  for (const f of EVENT_FIELDS) {
+    const [v, c] = pick3(base.event?.[f], local.event?.[f], remote.event?.[f]);
+    setField(ev, f, v);
+    if (c) notes.push(`Jaktdag: båda ändrade ${LABEL[f]} — din version gäller.`);
+  }
+  merged.event = ev;
+
+  // Location image
+  {
+    const [v] = pick3(base.locationImageDataURL, local.locationImageDataURL, remote.locationImageDataURL);
+    setField(merged, "locationImageDataURL", v);
+  }
+
+  // Catalogs
+  setField(merged, "drives", unionCatalog(local.drives, remote.drives, (d) => d.name));
+  setField(merged, "posts", unionCatalog(local.posts, remote.posts, (p) => `${p.postNumber}\u0001${p.code || ""}`));
+  setField(merged, "hunters", unionCatalog(local.hunters, remote.hunters, (h) => h.uuid));
+
+  // Attendees
+  setField(merged, "eventAttendees", mergeSet(base.eventAttendees, local.eventAttendees, remote.eventAttendees));
+
+  // Day cars
+  {
+    const B = base.eventAttendeeDayCars, L = local.eventAttendeeDayCars, R = remote.eventAttendeeDayCars;
+    if (L === undefined && R === undefined) {
+      delete merged.eventAttendeeDayCars;
+    } else {
+      const out = {};
+      const keys = new Set([...Object.keys(L || {}), ...Object.keys(R || {}), ...Object.keys(B || {})]);
+      for (const k of keys) {
+        const [v, c] = pick3(B?.[k], L?.[k], R?.[k]);
+        if (v !== undefined) out[k] = v;
+        if (c) notes.push(`Bil för dagen: båda ändrade samma skytt — din version gäller.`);
+      }
+      merged.eventAttendeeDayCars = out;
+    }
+  }
+
+  // Event drives, keyed by driveName
+  const edMap = (pkg) => new Map((pkg?.eventDrives || []).map((ed) => [ed.driveName, ed]));
+  const bED = edMap(base), lED = edMap(local), rED = edMap(remote);
+  const driveNames = [];
+  for (const name of [...lED.keys(), ...rED.keys()]) if (!driveNames.includes(name)) driveNames.push(name);
+  const mergedDrives = [];
+  for (const name of driveNames) {
+    const inB = bED.has(name), inL = lED.has(name), inR = rED.has(name);
+    const present = (inL && inR) || (!inB && (inL || inR));
+    if (!present) {
+      if (inB && (inL !== inR)) notes.push(`Såten ${name} togs bort.`);
+      continue;
+    }
+    if (inL && inR) {
+      const ed = { ...rED.get(name), ...lED.get(name) };
+      for (const f of ED_FIELDS) {
+        const [v, c] = pick3(bED.get(name)?.[f], lED.get(name)[f], rED.get(name)[f]);
+        setField(ed, f, v);
+        if (c && f === "reassemblyPoint") notes.push(`Såten ${name}: båda ändrade återsamlingsplats — din version gäller.`);
+      }
+      mergedDrives.push(ed);
+    } else {
+      mergedDrives.push({ ...(inL ? lED.get(name) : rED.get(name)) });
+    }
+  }
+  // Drive order: sort by driveOrder (ties by name); renumber only if duplicates.
+  // Ties by plain code-unit order of the name (not locale-dependent), so
+  // every implementation breaks them the same way.
+  const byName = (a, b) => (a.driveName < b.driveName ? -1 : a.driveName > b.driveName ? 1 : 0);
+  mergedDrives.sort((a, b) => (a.driveOrder - b.driveOrder) || byName(a, b));
+  const orders = mergedDrives.map((d) => d.driveOrder);
+  if (new Set(orders).size !== orders.length) {
+    const start = Math.min(...orders.filter((o) => Number.isFinite(o)), 0);  // app counts from 0
+    mergedDrives.forEach((d, i) => { d.driveOrder = start + i; });
+  }
+  const localIdByName = new Map();
+  mergedDrives.forEach((d, i) => { d.localId = `ed${i + 1}`; localIdByName.set(d.driveName, d.localId); });
+  merged.eventDrives = mergedDrives;
+
+  // Post assignments
+  const toMap = (list) => new Map(list.map((x) => [x.key, x]));
+  const bPA = toMap(keyedAssignments(base)), lList = keyedAssignments(local), rList = keyedAssignments(remote);
+  const lPA = toMap(lList), rPA = toMap(rList);
+  const keys = [];
+  for (const x of [...lList, ...rList]) if (!keys.includes(x.key)) keys.push(x.key);
+  const mergedPA = [];
+  const localChangedAssignee = new Set();
+  for (const key of keys) {
+    const b = bPA.get(key), l = lPA.get(key), r = rPA.get(key);
+    const driveName = (l || r).driveName;
+    if (!localIdByName.has(driveName)) continue; // its drive is gone
+    const present = (l && r) || (!b && (l || r));
+    if (!present) continue;
+    let pa;
+    if (l && r) {
+      pa = { ...r.pa, ...l.pa };
+      const [a, ac] = pick3(b ? assigneeOf(b.pa) : undefined, assigneeOf(l.pa), assigneeOf(r.pa));
+      pa.assigneeType = a.assigneeType; pa.hunterUUID = a.hunterUUID; pa.role = a.role;
+      if (!deepEqual(assigneeOf(l.pa), b ? assigneeOf(b.pa) : undefined)) localChangedAssignee.add(key);
+      if (ac) notes.push(`Såten ${driveName}, post ${l.pa.postNumber}${l.pa.postCode || ""}: båda satte olika skyttar — din version gäller.`);
+      for (const f of PA_FIELDS) {
+        const [v, c] = pick3(b?.pa[f], l.pa[f], r.pa[f]);
+        setField(pa, f, v);
+        if (c && f !== "sortOrder") notes.push(`Såten ${driveName}, post ${l.pa.postNumber}${l.pa.postCode || ""}: båda ändrade ${PA_LABEL[f]} — din version gäller.`);
+      }
+    } else {
+      pa = { ...(l || r).pa };
+      if (l) localChangedAssignee.add(key);
+    }
+    for (const k of ["assigneeType", "hunterUUID", "role"]) if (pa[k] == null) delete pa[k];
+    pa.eventDriveLocalId = localIdByName.get(driveName);
+    mergedPA.push({ key, driveName, pa });
+  }
+  // Nobody can stand on two posts in the same drive: keep the placement this
+  // side made (or the first), clear the others.
+  const byDriveHunter = new Map();
+  for (const x of mergedPA) {
+    if (x.pa.assigneeType !== "hunter" || !x.pa.hunterUUID) continue;
+    const k = x.driveName + "\u0001" + x.pa.hunterUUID;
+    if (!byDriveHunter.has(k)) byDriveHunter.set(k, []);
+    byDriveHunter.get(k).push(x);
+  }
+  for (const list of byDriveHunter.values()) {
+    if (list.length < 2) continue;
+    const keep = list.find((x) => localChangedAssignee.has(x.key)) || list[0];
+    for (const x of list) {
+      if (x === keep) continue;
+      delete x.pa.assigneeType; delete x.pa.hunterUUID; delete x.pa.role;
+      notes.push(`Såten ${x.driveName}: en skytt stod på två pass — post ${x.pa.postNumber}${x.pa.postCode || ""} tömdes.`);
+    }
+  }
+  merged.postAssignments = mergedPA.map((x, i) => ({ ...x.pa, id: `pa${i + 1}` }));
+  return { merged, notes };
+}
+
+  return { mergePackages, normalize, deepEqual };
+  })();
+
   // ---------- drop box (short #h= links, send in / fetch latest) ----------
   //
   // The contract is SCHEMA.md's "Drop box API" section. The Worker stores
@@ -1155,6 +1441,126 @@
   // null, or {token, baseVersion, syncedHash, lastMeta, remoteMeta}
   let dropbox = null;
   let dropboxBusy = false;
+  // Notes from a merge made while polling (shown after the "ej skickade" text).
+  let mergeInfo = "";
+  let mergeInfoTitle = "";
+
+  // The BASE for three-way merging: the whole package as last fetched or
+  // sent, with its version. Kept in memory and in its own localStorage key
+  // (separate from the draft slot), so it survives a reload. Without a base
+  // for the version a draft started from, there is no merge and the
+  // behaviour is the old one (fetch first, nothing is sent).
+  const BASE_KEY = "huntBaseSlot";
+  let baseMem = null; // {token, version, pkg}
+
+  function clonePkg(p) {
+    return JSON.parse(JSON.stringify(p));
+  }
+
+  function setBase(token, version, pkg) {
+    const b = { token: token, version: version, pkg: pkg };
+    baseMem = b;
+    persistBase(b);
+  }
+
+  async function persistBase(b) {
+    try {
+      const store = (o) => {
+        if (baseMem !== b) return true; // superseded by a newer base
+        localStorage.setItem(BASE_KEY, JSON.stringify(o));
+        return true;
+      };
+      const encoded = await encodeStateForLink(b.pkg);
+      try {
+        store({ v: 1, token: b.token, version: b.version, encoded: encoded });
+      } catch (e) {
+        // Too big for the browser's quota (a large Location photo): keep it
+        // without the photo; the merge then lets this side's photo stand.
+        const slim = Object.assign({}, b.pkg);
+        delete slim.locationImageDataURL;
+        const enc2 = await encodeStateForLink(slim);
+        try {
+          store({ v: 1, token: b.token, version: b.version, encoded: enc2, noImage: true });
+        } catch (e2) {
+          try { localStorage.removeItem(BASE_KEY); } catch (e3) { /* ignore */ }
+        }
+      }
+    } catch (e) {
+      // best-effort only
+    }
+  }
+
+  // {pkg, noImage} for exactly this token+version, or null.
+  async function getBase(token, version) {
+    if (baseMem && baseMem.token === token && baseMem.version === version) {
+      return { pkg: baseMem.pkg, noImage: false };
+    }
+    try {
+      const raw = localStorage.getItem(BASE_KEY);
+      if (!raw) return null;
+      const o = JSON.parse(raw);
+      if (!o || o.token !== token || o.version !== version || typeof o.encoded !== "string") return null;
+      const pkg = await decodeStateFromLink(o.encoded);
+      if (!pkg) return null;
+      if (!o.noImage) baseMem = { token: token, version: version, pkg: pkg };
+      return { pkg: pkg, noImage: !!o.noImage };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function baseKnown() {
+    return !!(dropbox && baseMem && baseMem.token === dropbox.token && baseMem.version === dropbox.baseVersion);
+  }
+
+  // After a restore from the draft slot with nothing unsent, the screen IS
+  // the stored version: make that the base if none is stored for it.
+  async function ensureBaseForCleanState() {
+    if (!dropbox || !state || isDirty()) return;
+    const token = dropbox.token, version = dropbox.baseVersion;
+    if (await getBase(token, version)) return;
+    if (dropbox && dropbox.token === token && dropbox.baseVersion === version && !isDirty()) {
+      setBase(token, version, clonePkg(state));
+    }
+  }
+
+  function mergeWithBase(baseEntry, local, remote) {
+    let base = baseEntry.pkg;
+    if (baseEntry.noImage) {
+      base = Object.assign({}, base);
+      if (remote.locationImageDataURL) base.locationImageDataURL = remote.locationImageDataURL;
+      else delete base.locationImageDataURL;
+    }
+    return HuntMerge.mergePackages(base, local, remote);
+  }
+
+  // At most 5 notes in the status line; the rest in the tooltip.
+  function formatNotes(notes) {
+    const uniq = [];
+    for (const n of notes) if (uniq.indexOf(n) < 0) uniq.push(n);
+    const shown = uniq.slice(0, 5).join(" ");
+    const more = uniq.length > 5 ? " (+" + (uniq.length - 5) + " till)" : "";
+    return { text: shown + more, title: uniq.join("\n") };
+  }
+
+  // Loads a merged package into the editor, keeping the tab, the sort and
+  // the selected drive (merging renumbers localIds, so match on drive name).
+  function adoptPackage(pkg, dropboxInfo) {
+    let driveName = null;
+    if (state && ui.selectedEventDriveLocalId) {
+      const cur = (state.eventDrives || []).find((e) => e.localId === ui.selectedEventDriveLocalId);
+      if (cur) driveName = cur.driveName;
+    }
+    const ok = loadPackage(pkg, dropboxInfo, true);
+    if (ok && driveName) {
+      const ed = (state.eventDrives || []).find((e) => e.driveName === driveName);
+      if (ed && ed.localId !== ui.selectedEventDriveLocalId) {
+        ui.selectedEventDriveLocalId = ed.localId;
+        render();
+      }
+    }
+    return ok;
+  }
 
   function dropboxLinkUrl(token) {
     return location.origin + location.pathname + "#h=" + token;
@@ -1218,10 +1624,12 @@
 
   let dropboxStatusText = "";
   let dropboxStatusKind = "";
+  let dropboxStatusTitle = "";
 
-  function setDropboxStatus(text, kind) {
+  function setDropboxStatus(text, kind, title) {
     dropboxStatusText = text;
     dropboxStatusKind = kind || "";
+    dropboxStatusTitle = title || "";
     updateDropboxUi();
   }
 
@@ -1346,9 +1754,15 @@
         text += " Utkastet är sparat i den här webbläsaren.";
       }
     }
+    let title = dropboxStatusTitle;
+    if (mergeInfo && dropbox) {
+      text = text ? text + " " + mergeInfo : mergeInfo;
+      title = mergeInfoTitle;
+    }
     const expiry = expiryLine();
     if (expiry) text = text ? text + " " + expiry : expiry;
     statusEl.textContent = text;
+    statusEl.title = title || "";
     statusEl.className = "dropbox-status" + (text ? " visible" : "") + (kind ? " " + kind : "");
 
     const remote = dropbox && dropbox.remoteMeta;
@@ -1357,8 +1771,11 @@
         " (version " + remote.version + ")";
       const dirty = isDirty();
       document.getElementById("dropboxBannerMsg").textContent = dirty
-        ? who + " medan du redigerade. Dina ändringar är inte skickade, och de går inte att skicka in " +
-          "förrän du har hämtat den nya versionen. Vill du behålla dem: spara dem som fil först."
+        ? (baseKnown()
+          ? who + " medan du redigerade. Ändringarna läggs in i dina så snart du slutar skriva, eller när du " +
+            "skickar in. Hämta senaste ersätter dina ändringar i stället."
+          : who + " medan du redigerade. Dina ändringar är inte skickade, och de går inte att skicka in " +
+            "förrän du har hämtat den nya versionen. Vill du behålla dem: spara dem som fil först.")
         : who + ". Hämta den för att se ändringarna.";
       document.getElementById("bannerSaveFileBtn").style.display = dirty ? "" : "none";
       document.getElementById("bannerFetchBtn").disabled = dropboxBusy;
@@ -1393,6 +1810,8 @@
       return true;
     }
     dropboxBusy = true;
+    mergeInfo = "";
+    mergeInfoTitle = "";
     setDropboxStatus("Hämtar från brevlådan…");
     try {
       const r = await dropboxRequest("GET", "/h/" + token);
@@ -1407,6 +1826,8 @@
           expiresAt: r.data.expiresAt || null,
         }, opts.keepTab);
         if (!ok) return false;
+        setBase(token, meta.version, clonePkg(state));
+        scheduleAutosave();
         setDropboxStatus("Hämtad: version " + meta.version + ", senast ändrad av " +
           (meta.updatedBy || "okänd") + " " + formatWhen(meta.updatedAt) + ".", "ok");
         return true;
@@ -1426,18 +1847,91 @@
     }
   }
 
-  // Cheap change check: /meta never downloads the hunt.
+  // Cheap change check: /meta never downloads the hunt. When someone else
+  // has sent in a newer version, take their changes in right away: straight
+  // loaded if nothing here is unsent, otherwise merged into the edits.
   async function checkMeta() {
     if (!dropbox || dropboxBusy) return;
     try {
       const r = await dropboxRequest("GET", "/h/" + dropbox.token + "/meta");
       if (r.status === 200 && r.data && dropbox) {
-        dropbox.remoteMeta = r.data.version > dropbox.baseVersion ? r.data : null;
+        const newer = r.data.version > dropbox.baseVersion;
+        dropbox.remoteMeta = newer ? r.data : null;
         dropbox.expiresAt = r.data.expiresAt || null;
         updateDropboxUi();
+        if (newer) await absorbRemote();
       }
     } catch (e) {
       // offline — try again at the next poll
+    }
+  }
+
+  // Not while someone is typing in a field or has a post open for editing:
+  // taking changes in re-draws the page.
+  function userIsEditing() {
+    const a = document.activeElement;
+    if (a && (a.tagName === "TEXTAREA" || a.tagName === "SELECT" ||
+        (a.tagName === "INPUT" && a.type !== "checkbox" && a.type !== "radio" && a.type !== "button"))) return true;
+    return !!ui.editingPost;
+  }
+
+  let absorbRetryTimer = null;
+
+  async function absorbRemote() {
+    if (!dropbox || dropboxBusy || !state) return;
+    if (userIsEditing()) {
+      clearTimeout(absorbRetryTimer);
+      absorbRetryTimer = setTimeout(checkMeta, 10000);
+      return;
+    }
+    const token = dropbox.token;
+    const baseVer = dropbox.baseVersion;
+    dropboxBusy = true;
+    updateDropboxUi();
+    try {
+      const g = await dropboxRequest("GET", "/h/" + token);
+      if (g.status !== 200 || !g.data || !g.data.payload || !g.data.version) return;
+      if (!dropbox || dropbox.token !== token || dropbox.baseVersion !== baseVer) return;
+      const remote = g.data;
+      if (remote.version <= baseVer) return;
+      const who = remote.updatedBy || "någon annan";
+      const info = {
+        token: token,
+        baseVersion: remote.version,
+        syncedHash: null,
+        lastMeta: { version: remote.version, updatedAt: remote.updatedAt, updatedBy: remote.updatedBy },
+        remoteMeta: null,
+        expiresAt: remote.expiresAt || dropbox.expiresAt || null,
+      };
+      if (!isDirty()) {
+        if (!loadPackage(remote.payload, info, true)) return;
+        mergeInfo = "";
+        mergeInfoTitle = "";
+        setBase(token, remote.version, clonePkg(state));
+        scheduleAutosave();
+        setDropboxStatus("Ändringar från " + who + " har lagts in (version " + remote.version + ").", "ok");
+        return;
+      }
+      const base = await getBase(token, baseVer);
+      if (!base) return; // no base for this version: the banner explains
+      if (!dropbox || dropbox.token !== token || dropbox.baseVersion !== baseVer) return;
+      const res = mergeWithBase(base, clonePkg(state), remote.payload);
+      // If the merge leaves exactly the remote hunt, nothing is unsent.
+      const canonical = HuntMerge.mergePackages(remote.payload, remote.payload, remote.payload).merged;
+      info.syncedHash = HuntMerge.deepEqual(HuntMerge.normalize(res.merged), HuntMerge.normalize(canonical))
+        ? null : "remote:" + remote.version;
+      if (!adoptPackage(res.merged, info)) return;
+      setBase(token, remote.version, clonePkg(remote.payload));
+      scheduleAutosave();
+      const f = formatNotes(res.notes);
+      mergeInfo = "Ändringar från " + who + " har lagts in." + (f.text ? " Obs: " + f.text : "");
+      mergeInfoTitle = f.title;
+      setDropboxStatus("", "");
+    } catch (e) {
+      // offline or unexpected — the banner (and the next poll) remain
+    } finally {
+      dropboxBusy = false;
+      updateDropboxUi();
     }
   }
 
@@ -1447,36 +1941,104 @@
       return;
     }
     const updatedBy = editorName();
-    const sentHash = stateHash();
+    const token = dropbox.token;
+    const startHash = stateHash();
+    const localSnapshot = clonePkg(state); // exactly what this send starts from
+    mergeInfo = "";
+    mergeInfoTitle = "";
     dropboxBusy = true;
     setDropboxStatus("Skickar in…");
+    const staleMessage = () => setDropboxStatus("Någon annan har ändrat — hämta först. Inget skickades.", "warn");
     try {
-      const r = await dropboxRequest("PUT", "/h/" + dropbox.token, {
-        baseVersion: dropbox.baseVersion,
-        updatedBy: updatedBy,
-        payload: state,
-      });
-      if (r.status === 200 && r.data) {
-        const now = new Date().toISOString();
-        dropbox.baseVersion = r.data.version;
-        dropbox.syncedHash = sentHash;
-        dropbox.lastMeta = { version: r.data.version, updatedAt: now, updatedBy: updatedBy };
-        dropbox.remoteMeta = null;
-        scheduleAutosave();
-        setDropboxStatus("Skickat till Fredrik " + formatWhen(now) + " (version " + r.data.version + ").", "ok");
-        return;
-      }
-      if (r.status === 409) {
-        dropbox.remoteMeta = r.data && r.data.version ? r.data : null;
-        if (!dropbox.remoteMeta) {
-          // version 0 = nothing stored any more: the hunt was removed after the hunt day.
-          setDropboxStatus("Jakten finns inte längre i brevlådan (den kan ha tagits bort efter jaktdagen). Inget skickades. Spara dina ändringar som fil och be Fredrik skicka jakten från appen igen.", "warn");
+      let toSend = localSnapshot;
+      let sendBase = dropbox.baseVersion;
+      let baseEntry = null;
+      let merged = false;
+      let who = "";
+      let expiresAt = null;
+      const notes = [];
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const r = await dropboxRequest("PUT", "/h/" + token, {
+          baseVersion: sendBase,
+          updatedBy: updatedBy,
+          payload: toSend,
+        });
+        if (r.status === 200 && r.data) {
+          const now = new Date().toISOString();
+          const lastMeta = { version: r.data.version, updatedAt: now, updatedBy: updatedBy };
+          if (!merged) {
+            dropbox.baseVersion = r.data.version;
+            dropbox.syncedHash = startHash;
+            dropbox.lastMeta = lastMeta;
+            dropbox.remoteMeta = null;
+            setBase(token, r.data.version, toSend);
+            scheduleAutosave();
+            setDropboxStatus("Skickat till Fredrik " + formatWhen(now) + " (version " + r.data.version + ").", "ok");
+            return;
+          }
+          // Sent a merged package: the editor now shows it (plus anything
+          // typed while the request was in flight, merged on top).
+          const info = {
+            token: token,
+            baseVersion: r.data.version,
+            syncedHash: null,
+            lastMeta: lastMeta,
+            remoteMeta: null,
+            expiresAt: expiresAt || dropbox.expiresAt || null,
+          };
+          let show = clonePkg(toSend);
+          if (stateHash() !== startHash) {
+            const again = HuntMerge.mergePackages(localSnapshot, clonePkg(state), toSend);
+            show = again.merged;
+            info.syncedHash = "remote:" + r.data.version;
+            for (const n of again.notes) notes.push(n);
+          }
+          if (!adoptPackage(show, info)) return;
+          setBase(token, r.data.version, toSend);
+          scheduleAutosave();
+          const f = formatNotes(notes);
+          const msg = "Sammanslaget med ändringar från " + who + " och skickat (version " + r.data.version + ")." +
+            (f.text ? " Obs: " + f.text : "");
+          if (info.syncedHash) {
+            // Typed while sending: the "ej skickade" line takes the status, so
+            // the merge result is shown after it.
+            mergeInfo = msg;
+            mergeInfoTitle = f.title;
+            setDropboxStatus("", "");
+          } else {
+            setDropboxStatus(msg, f.text ? "warn" : "ok", f.title);
+          }
           return;
         }
-        setDropboxStatus("Någon annan har ändrat — hämta först. Inget skickades.", "warn");
+        if (r.status === 409) {
+          dropbox.remoteMeta = r.data && r.data.version ? r.data : null;
+          if (!dropbox.remoteMeta) {
+            // version 0 = nothing stored any more: the hunt was removed after the hunt day.
+            setDropboxStatus("Jakten finns inte längre i brevlådan (den kan ha tagits bort efter jaktdagen). Inget skickades. Spara dina ändringar som fil och be Fredrik skicka jakten från appen igen.", "warn");
+            return;
+          }
+          if (attempt === 2) { staleMessage(); return; }
+          // Someone else got there first: merge their version into ours.
+          if (!baseEntry) baseEntry = await getBase(token, sendBase);
+          if (!baseEntry) { staleMessage(); return; }
+          const g = await dropboxRequest("GET", "/h/" + token);
+          if (g.status !== 200 || !g.data || !g.data.payload || !g.data.version) { staleMessage(); return; }
+          const res = mergeWithBase(baseEntry, toSend, g.data.payload);
+          for (const n of res.notes) notes.push(n);
+          who = g.data.updatedBy || "någon annan";
+          expiresAt = g.data.expiresAt || expiresAt;
+          // If it collides again, the next base is what we just merged in.
+          baseEntry = { pkg: clonePkg(g.data.payload), noImage: false };
+          toSend = res.merged;
+          sendBase = g.data.version;
+          merged = true;
+          setDropboxStatus("Slår ihop med ändringar från " + who + "…");
+          continue;
+        }
+        setDropboxStatus("Brevlådan tog inte emot ändringarna (" + r.status + ").", "warn");
         return;
       }
-      setDropboxStatus("Brevlådan tog inte emot ändringarna (" + r.status + ").", "warn");
+      staleMessage();
     } catch (e) {
       // Drop box unreachable: fall back to the old file + email route, so
       // the edits still have a way to reach Fredrik.
@@ -1599,8 +2161,8 @@
     sync: {
       t: "Spara, skicka och dela",
       p: [
-        "Skicka in — skickar dina ändringar till Fredrik via brevlådan. Första gången frågar den efter ditt namn. Om någon annan hunnit ändra före dig skickas inget; hämta då senaste versionen först.",
-        "Hämta senaste — hämtar den nyaste versionen från brevlådan. Har du osända ändringar frågar sidan först, eftersom de ersätts.",
+        "Skicka in — skickar dina ändringar till Fredrik via brevlådan. Första gången frågar den efter ditt namn. Har någon annan hunnit skicka in före dig slås deras ändringar ihop med dina automatiskt; bara om ni ändrat exakt samma sak gäller din version, och sidan berättar vad som hände. Har du inte sparat någon grund att slå ihop mot (t.ex. en jakt som öppnades från ett äldre utkast) skickas inget; hämta då senaste versionen först.",
+        "Hämta senaste — hämtar den nyaste versionen från brevlådan. Har du osända ändringar frågar sidan först, eftersom de ersätts. Sidan kollar också själv var tredje minut och lägger in andras ändringar i dina utan att skicka något åt dig.",
         "Under Mer ▾: Dela länk… (en länk som öppnar samma jaktdag), Spara som fil… (laddar ner jaktdagen som en fil, som säkerhetskopia eller om du saknar täckning) och Öppna fil… (läser in en sparad jaktdagsfil).",
         "Ditt arbete sparas automatiskt som ett utkast i den här webbläsaren tills du trycker Skicka in, så det finns kvar om du laddar om sidan eller stänger fliken. Utkastet följer inte med till en annan enhet eller webbläsare — då behöver du skicka in först.",
         "Jakten tas bort från webben automatiskt dagen efter jaktdagen, och länken slutar då att fungera. Statusraden visar \"Ligger kvar t.o.m.\" och sista dagen.",
@@ -2904,7 +3466,9 @@
     decodeStateFromLink(saved.encoded)
       .then((pkg) => {
         loadPackage(pkg, saved.dropbox);
-        if (dropbox) checkMeta();
+        if (dropbox) {
+          ensureBaseForCleanState().then(checkMeta);
+        }
       })
       .catch(() => {
         // corrupted autosave — don't block the app over it, just start clean

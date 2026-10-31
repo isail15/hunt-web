@@ -30,7 +30,15 @@ check is what stops two editors from silently overwriting each other (see
     "date": "2026-10-18",           // Event.date, ISO 8601 date
     "locationName": "Ånnebo",       // Event.location?.name
     "huntType": "Klövvilt",         // Event.huntType (free text, nullable)
-    "comment": null                 // Event.comment (nullable)
+    "comment": null,                // Event.comment (nullable)
+    // "Samma bil hela dagen" (2026-10-31), all three OPTIONAL. The app always
+    // writes them; the web editor always writes them once it has seen the
+    // hunt (also false / [] / {}), so a switch-off reaches the app. Absent =
+    // the sender said nothing and the receiver keeps its own value.
+    "sameCarAllDay": false,         // Event.sameCarAllDay: feature on/off for this hunt day
+    "carRuleExceptions": []         // Event.carRuleExceptions: car names whose "counts as a car" differs from the default
+                                    // (default: a name counts as a car unless it contains "hundförare" or "till pass", case-insensitive).
+                                    // Names are compared after trimming; only the exceptions are stored.
   },
 
   // Catalog of Drive names this property uses. Matched by name on import;
@@ -84,6 +92,13 @@ check is what stops two editors from silently overwriting each other (see
   "eventAttendees": [
     "6b1f2e2a-0000-4000-8000-000000000001"
   ],
+
+  // Hand-set "car for the day" per hunter uuid (only hand-set ones). A hunter
+  // missing here has an AUTOMATIC day car: the car of their earliest placement
+  // in a real car (drive order, then sortOrder), worked out each time.
+  // OPTIONAL; empty map = all automatic. Used only while event.sameCarAllDay
+  // is true. The reports ignore it.
+  "eventAttendeeDayCars": { "6b1f2e2a-0000-4000-8000-000000000001": "Buss 1" },
 
   // The hunt Location's photo, as a complete data: URL ready for <img src>.
   // OPTIONAL and often absent (no photo, unrecognised format, or over

@@ -198,6 +198,17 @@
   table.assign input, table.assign select { width: 100%; }
   /* Hett (flame): a toggle in Förberedelse, a read-only mark in
      Passfördelning. Same width either way so columns stay put. */
+  .same-car-box { margin: 0 0 14px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-alt); }
+  .same-car-box .sc-title { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+  .same-car-box .sc-list { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px; font-size: 13px; }
+  .same-car-box .sc-list label { display: inline-flex; align-items: center; gap: 5px; }
+  .same-car-box .sc-head { margin-top: 8px; font-size: 12px; color: var(--muted); }
+  .assignee-line { display: flex; align-items: center; gap: 6px; }
+  .assignee-line select { flex: 1; min-width: 0; }
+  .car-mismatch { color: #e8590c; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .attendee-daycar { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .attendee-row .daycar-sel { width: auto; max-width: 180px; font-size: 12px; }
+  .attendee-list.with-daycar { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
   .sort-btn {
     font: inherit; text-transform: inherit; letter-spacing: inherit; color: inherit;
     background: none; border: none; padding: 0; margin: 0; cursor: pointer;
@@ -682,6 +693,73 @@
   // blankIfNone: the reports print an unassigned post as an empty line, not
   // as text, so a gap is obvious at a glance. The editor screens keep the
   // words "Ej tilldelad".
+  // ---- "Samma bil hela dagen" (same rules as the app, SameCarAllDay.swift) ----
+  // Each hunter gets a car for the day: a hand-set one from
+  // state.eventAttendeeDayCars, otherwise the car of their EARLIEST placement
+  // in a real car (drive order, then sortOrder). Worked out every time, so
+  // fixing drive 1 later fixes it everywhere. A hunter standing in a real car
+  // that isn't their day car is shown, never blocked.
+  const carKey = (c) => String(c == null ? "" : c).trim();
+  const sameCarOn = () => !!(state && state.event && state.event.sameCarAllDay === true);
+  // "Åker med hundförare" / "Går till pass" are groups, not cars, unless the
+  // user's carRuleExceptions flips that for a name.
+  const defaultCountsAsCar = (name) => !/hundförare|till pass/i.test(name);
+
+  function countsAsCar(name) {
+    const k = carKey(name);
+    if (!k) return false;
+    const flipped = (state.event.carRuleExceptions || []).indexOf(k) !== -1;
+    return defaultCountsAsCar(k) !== flipped;
+  }
+
+  function setCountsAsCar(name, value) {
+    const k = carKey(name);
+    const list = (state.event.carRuleExceptions || []).filter((x) => x !== k);
+    if (value !== defaultCountsAsCar(k)) list.push(k);
+    state.event.carRuleExceptions = list;
+  }
+
+  function carNamesInUse() {
+    const set = new Set();
+    state.postAssignments.forEach((pa) => {
+      const k = carKey(pa.car);
+      if (k) set.add(k);
+    });
+    return [...set].sort((a, b) => a.localeCompare(b, "sv", { numeric: true }));
+  }
+
+  function realCarNames() {
+    return carNamesInUse().filter(countsAsCar);
+  }
+
+  function derivedDayCar(uuid) {
+    const drives = [...state.eventDrives].sort((a, b) => a.driveOrder - b.driveOrder);
+    for (const ed of drives) {
+      const rows = state.postAssignments
+        .filter((pa) => pa.eventDriveLocalId === ed.localId)
+        .sort((a, b) => a.sortOrder - b.sortOrder);
+      for (const pa of rows) {
+        if (pa.assigneeType === "hunter" && pa.hunterUUID === uuid && countsAsCar(pa.car)) return carKey(pa.car);
+      }
+    }
+    return null;
+  }
+
+  function dayCarFor(uuid) {
+    if (!sameCarOn()) return null;
+    const hand = carKey((state.eventAttendeeDayCars || {})[uuid]);
+    return hand || derivedDayCar(uuid);
+  }
+
+  // The hunter's day car, when this pass is in a different real car; else null.
+  function carMismatch(pa) {
+    if (!sameCarOn() || pa.assigneeType !== "hunter" || !pa.hunterUUID) return null;
+    const car = carKey(pa.car);
+    if (!car || !countsAsCar(car)) return null;
+    const day = dayCarFor(pa.hunterUUID);
+    return day && day !== car ? day : null;
+  }
+
   function assigneeName(pa, blankIfNone) {
     if (pa.assigneeType === "hunter" && pa.hunterUUID) {
       const h = hunterByUUID(pa.hunterUUID);
@@ -734,6 +812,21 @@
     // disappears; Fredrik can then narrow it down from the Deltagare box.
     if (!Array.isArray(state.eventAttendees)) {
       state.eventAttendees = state.hunters.map((h) => h.uuid);
+    }
+    // "Samma bil hela dagen": the three package fields are always present
+    // once this editor has seen the hunt, so a switch-off or an "automatic"
+    // choice made here reaches the app instead of being read as "not said".
+    const hashBeforeDefaults = dropboxInfo && dropboxInfo.syncedHash ? stateHash() : null;
+    if (!state.event) state.event = {};
+    if (typeof state.event.sameCarAllDay !== "boolean") state.event.sameCarAllDay = false;
+    if (!Array.isArray(state.event.carRuleExceptions)) state.event.carRuleExceptions = [];
+    if (!state.eventAttendeeDayCars || typeof state.eventAttendeeDayCars !== "object" || Array.isArray(state.eventAttendeeDayCars)) {
+      state.eventAttendeeDayCars = {};
+    }
+    // A draft saved before these defaults existed must not look "changed"
+    // just because they were filled in now.
+    if (hashBeforeDefaults !== null && dropboxInfo.syncedHash === hashBeforeDefaults) {
+      dropboxInfo.syncedHash = stateHash();
     }
     ui = {
       tab: keepTab ? previousTab : "setup",
@@ -1208,6 +1301,27 @@
   window.addEventListener("resize", closeMoreMenu);
   window.addEventListener("scroll", closeMoreMenu, { passive: true });
 
+  // "Ligger kvar t.o.m. <datum>." from the drop box's expiresAt. The app sets
+  // expiresAt to midnight at the END of the day after the hunt (Swedish time),
+  // so the last day the hunt exists is the day before that moment: take one
+  // second off and read the calendar date in Europe/Stockholm. No expiresAt
+  // (a hunt published before expiry existed) = no line.
+  function expiryLine() {
+    const ms = dropbox && dropbox.expiresAt ? Date.parse(dropbox.expiresAt) : NaN;
+    if (isNaN(ms)) return "";
+    let parts;
+    try {
+      parts = new Intl.DateTimeFormat("sv-SE", {
+        timeZone: "Europe/Stockholm", year: "numeric", month: "2-digit", day: "2-digit",
+      }).formatToParts(new Date(ms - 1000));
+    } catch (e) {
+      return "";
+    }
+    const get = (t) => (parts.find((x) => x.type === t) || {}).value;
+    if (!get("year") || !get("month") || !get("day")) return "";
+    return "Ligger kvar t.o.m. " + formatDate(get("year") + "-" + get("month") + "-" + get("day")) + ".";
+  }
+
   function updateDropboxUi() {
     const sendBtn = document.getElementById("sendBackBtn");
     const fetchBtn = document.getElementById("fetchLatestBtn");
@@ -1231,6 +1345,8 @@
         text += " Utkastet är sparat i den här webbläsaren.";
       }
     }
+    const expiry = expiryLine();
+    if (expiry) text = text ? text + " " + expiry : expiry;
     statusEl.textContent = text;
     statusEl.className = "dropbox-status" + (text ? " visible" : "") + (kind ? " " + kind : "");
 
@@ -1287,6 +1403,7 @@
           syncedHash: null,
           lastMeta: meta,
           remoteMeta: null,
+          expiresAt: r.data.expiresAt || null,
         }, opts.keepTab);
         if (!ok) return false;
         setDropboxStatus("Hämtad: version " + meta.version + ", senast ändrad av " +
@@ -1294,7 +1411,7 @@
         return true;
       }
       if (r.status === 404) {
-        setDropboxStatus("Den här länken har ingen jakt i brevlådan ännu. Be Fredrik skicka den från appen.", "warn");
+        setDropboxStatus("Jakten finns inte i brevlådan. Den kan ha tagits bort efter jaktdagen, eller har inte skickats ännu. Be Fredrik skicka den från appen.", "warn");
         return !!state;
       }
       setDropboxStatus("Brevlådan svarade med ett fel (" + r.status + ").", "warn");
@@ -1315,6 +1432,7 @@
       const r = await dropboxRequest("GET", "/h/" + dropbox.token + "/meta");
       if (r.status === 200 && r.data && dropbox) {
         dropbox.remoteMeta = r.data.version > dropbox.baseVersion ? r.data : null;
+        dropbox.expiresAt = r.data.expiresAt || null;
         updateDropboxUi();
       }
     } catch (e) {
@@ -1349,6 +1467,11 @@
       }
       if (r.status === 409) {
         dropbox.remoteMeta = r.data && r.data.version ? r.data : null;
+        if (!dropbox.remoteMeta) {
+          // version 0 = nothing stored any more: the hunt was removed after the hunt day.
+          setDropboxStatus("Jakten finns inte längre i brevlådan (den kan ha tagits bort efter jaktdagen). Inget skickades. Spara dina ändringar som fil och be Fredrik skicka jakten från appen igen.", "warn");
+          return;
+        }
         setDropboxStatus("Någon annan har ändrat — hämta först. Inget skickades.", "warn");
         return;
       }
@@ -1479,6 +1602,7 @@
         "Hämta senaste — hämtar den nyaste versionen från brevlådan. Har du osända ändringar frågar sidan först, eftersom de ersätts.",
         "Under Mer ▾: Dela länk… (en länk som öppnar samma jaktdag), Spara som fil… (laddar ner jaktdagen som en fil, som säkerhetskopia eller om du saknar täckning) och Öppna fil… (läser in en sparad jaktdagsfil).",
         "Ditt arbete sparas automatiskt som ett utkast i den här webbläsaren tills du trycker Skicka in, så det finns kvar om du laddar om sidan eller stänger fliken. Utkastet följer inte med till en annan enhet eller webbläsare — då behöver du skicka in först.",
+        "Jakten tas bort från webben automatiskt dagen efter jaktdagen, och länken slutar då att fungera. Statusraden visar \"Ligger kvar t.o.m.\" och sista dagen.",
         "En jaktdag som öppnats från fil har i stället knapparna Öppna fil…, Dela länk…, Skicka tillbaka… (laddar ner filen och öppnar ett mejl) och Spara ändringar….",
       ],
     },
@@ -1510,6 +1634,14 @@
         "Turordningen inom bilen: i vilken ordning jägarna stiger av, så som de sitter i bussen. Lägst tal först.",
         "Ska ett pass in mellan 2 och 3? Skriv 2,1 — då hamnar det däremellan. Tryck sedan på Sortera om bilordning för att få rena tal 1, 2, 3…",
         "Ordningen gäller inom varje bil, så två bilar kan båda ha en etta. Tomt = ingen ordning (räknas sist, och sorteras då efter postnummer). Rapporten följer ordningen, och den följer också med tillbaka till appen.",
+      ],
+    },
+    sameCar: {
+      t: "Samma bil hela dagen",
+      p: [
+        "Varje skytt får en bil för dagen: den bil hen står i i första såten, om du inte väljer en annan. Grupper som inte är bilar (t.ex. ”Åker med hundförare”, ”Går till pass”) påverkar aldrig någons bil.",
+        "Under Passfördelning visas ”(Buss 2)” i orange efter namnet när skytten står i en annan bil än sin egen, och i jägarlistan kommer de som hör till passets bil först. Det är bara en hjälp: du kan fortfarande placera vem du vill.",
+        "Bilen för dagen kan ändras per deltagare under Passfördelning → Visa/redigera deltagare. ”Automatiskt” räknar ut den igen. Inställningen följer med tillbaka till appen och syns inte i rapporterna.",
       ],
     },
     hot: {
@@ -1616,6 +1748,68 @@
 
   // ---- Setup tab (Förberedelse): event fields, drives, posts+car+order ----
 
+  // Förberedelse: the on/off switch and, when on, which names count as cars.
+  // The list is rebuilt when a car field is left (see refreshCarRuleList).
+  let carRuleListEl = null;
+
+  function buildCarRuleList(el) {
+    el.innerHTML = "";
+    const names = carNamesInUse();
+    if (!names.length) {
+      el.textContent = "Inga bilar inlagda ännu.";
+      return;
+    }
+    names.forEach((name) => {
+      const label = document.createElement("label");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = countsAsCar(name);
+      cb.onchange = () => {
+        setCountsAsCar(name, cb.checked);
+        scheduleAutosave();
+      };
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(" " + name));
+      el.appendChild(label);
+    });
+  }
+
+  function refreshCarRuleList() {
+    if (carRuleListEl && carRuleListEl.isConnected) buildCarRuleList(carRuleListEl);
+  }
+
+  function renderSameCarBox() {
+    const box = document.createElement("div");
+    box.className = "same-car-box";
+    const title = document.createElement("label");
+    title.className = "sc-title";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = sameCarOn();
+    cb.onchange = () => {
+      state.event.sameCarAllDay = cb.checked;
+      scheduleAutosave();
+      render();
+    };
+    title.appendChild(cb);
+    title.appendChild(document.createTextNode(" Samma bil hela dagen"));
+    title.insertAdjacentHTML("beforeend", helpBtn("sameCar"));
+    box.appendChild(title);
+    carRuleListEl = null;
+    if (sameCarOn()) {
+      const head = document.createElement("div");
+      head.className = "sc-head";
+      head.textContent = "Räknas som bil:";
+      box.appendChild(head);
+      const list = document.createElement("div");
+      list.className = "sc-list";
+      buildCarRuleList(list);
+      box.appendChild(list);
+      carRuleListEl = list;
+    }
+    return box;
+  }
+
   function renderSetup(app) {
     const wrap = document.createElement("div");
 
@@ -1628,6 +1822,8 @@
       '<label class="field"><span>Kommentar' + helpBtn("comment") + '</span><input data-f="comment" type="text"></label>';
     wrap.appendChild(grid);
     grid.querySelectorAll("input").forEach((el) => bindPlainField(el, state.event, el.dataset.f));
+
+    wrap.appendChild(renderSameCarBox());
 
     const driveList = document.createElement("div");
     orderedEventDrives().forEach((ed, idx, arr) => {
@@ -1850,6 +2046,7 @@
       }
 
       bindPlainField(tr.querySelector("[data-car]"), pa, "car");
+      tr.querySelector("[data-car]").addEventListener("change", refreshCarRuleList);
       bindPlainField(tr.querySelector("[data-order]"), pa, "carOrder", (v) => (v === null ? null : parseFloat(v.replace(",", "."))));
       bindHotButton(tr.querySelector("[data-hot]"), pa);
       tr.querySelector("[data-del]").onclick = () => {
@@ -2021,11 +2218,19 @@
         '<td class="post-label">' + escapeHtml(displayLabel(post)) + hotMarkHtml(pa) + "</td>" +
         '<td class="readonly">' + escapeHtml(pa.car || "—") + "</td>" +
         '<td>' +
-          '<select data-assignee>' + assigneeOptions(pa) + "</select>" +
+          '<div class="assignee-line"><select data-assignee>' + assigneeOptions(pa) + "</select>" +
+          '<span class="car-mismatch" data-mismatch></span></div>' +
           '<input type="text" data-freeform placeholder="Namn på jägaren"' +
             (freeformVisible ? "" : ' style="display:none"') + ">" +
         "</td>" +
         "<td><input type=\"text\" data-comment></td>";
+      const mism = carMismatch(pa);
+      const mismEl = tr.querySelector("[data-mismatch]");
+      if (mism) {
+        mismEl.textContent = "(" + mism + ")";
+        mismEl.title = "Skyttens bil för dagen är " + mism;
+      }
+      tr.dataset.paId = pa.id;
       bindPlainField(tr.querySelector("[data-comment]"), pa, "comment");
       bindPlainField(tr.querySelector("[data-freeform]"), pa, "freeformName");
       tr.querySelector("[data-assignee]").onchange = (e) => {
@@ -2042,9 +2247,19 @@
         // Only the freeform text field's visibility depends on this
         // choice, so a full render() (which would rebuild every row and
         // drop focus) isn't needed — just toggle it in place.
+        scheduleAutosave();
+        if (sameCarOn()) {
+          // Day cars and the "samma bil i dag" groups depend on who stands
+          // where, so the whole list is redrawn; keep the typing focus.
+          render();
+          if (pa.assigneeType === "freeform") {
+            const again = document.querySelector('tr[data-pa-id="' + pa.id + '"] [data-freeform]');
+            if (again) again.focus();
+          }
+          return;
+        }
         tr.querySelector("[data-freeform]").style.display = pa.assigneeType === "freeform" ? "" : "none";
         if (pa.assigneeType === "freeform") tr.querySelector("[data-freeform]").focus();
-        scheduleAutosave();
       };
       tbody.appendChild(tr);
     });
@@ -2056,6 +2271,35 @@
 
   function assigneeOptions(pa) {
     let html = '<option value=""' + (pa.assigneeType == null ? " selected" : "") + ">Ej tilldelad</option>";
+    // Same car today: for a pass in a real car, the unplaced hunters whose day
+    // car is this car (and whoever already stands here) come first.
+    const passCar = carKey(pa.car);
+    const topUuids = new Set();
+    if (sameCarOn() && passCar && countsAsCar(passCar)) {
+      const placed = new Set(
+        state.postAssignments
+          .filter((x) => x !== pa && x.eventDriveLocalId === pa.eventDriveLocalId && x.assigneeType === "hunter" && x.hunterUUID)
+          .map((x) => x.hunterUUID)
+      );
+      const attendeesNow = new Set(state.eventAttendees || []);
+      const top = state.hunters
+        .filter((h) => {
+          const here = pa.assigneeType === "hunter" && pa.hunterUUID === h.uuid;
+          if (!attendeesNow.has(h.uuid) && !here) return false;
+          if (dayCarFor(h.uuid) !== passCar) return false;
+          return here || !placed.has(h.uuid);
+        })
+        .sort((a, b) => a.name.localeCompare(b.name, "sv"));
+      if (top.length) {
+        html += '<optgroup label="' + escapeAttr(passCar) + ' — samma bil i dag">';
+        top.forEach((h) => {
+          topUuids.add(h.uuid);
+          const sel = pa.assigneeType === "hunter" && pa.hunterUUID === h.uuid;
+          html += '<option value="hunter:' + h.uuid + '"' + (sel ? " selected" : "") + ">" + escapeHtml(h.name) + "</option>";
+        });
+        html += "</optgroup>";
+      }
+    }
     html += '<optgroup label="Funktionsroll">';
     ROLES.forEach((r) => {
       const sel = pa.assigneeType === "role" && pa.role === r;
@@ -2070,13 +2314,17 @@
     // never silently loses its label.
     const attendeeSet = new Set(state.eventAttendees || []);
     [...state.hunters]
+      .filter((h) => !topUuids.has(h.uuid))
       .filter((h) => attendeeSet.has(h.uuid) || (pa.assigneeType === "hunter" && pa.hunterUUID === h.uuid))
       .sort((a, b) => a.name.localeCompare(b.name, "sv"))
       .forEach((h) => {
         const sel = pa.assigneeType === "hunter" && pa.hunterUUID === h.uuid;
         const notAttending = !attendeeSet.has(h.uuid);
+        // Their own car, when it isn't this pass's car (an <option> can't be grey).
+        const day = sameCarOn() ? dayCarFor(h.uuid) : null;
+        const dayNote = day && day !== passCar ? " (" + day + ")" : "";
         html += '<option value="hunter:' + h.uuid + '"' + (sel ? " selected" : "") + ">" +
-          escapeHtml(h.name) + (notAttending ? " (ej anmäld)" : "") + "</option>";
+          escapeHtml(h.name) + escapeHtml(dayNote) + (notAttending ? " (ej anmäld)" : "") + "</option>";
       });
     html += "</optgroup>";
     html += '<option value="freeform"' + (pa.assigneeType === "freeform" ? " selected" : "") +
@@ -2091,6 +2339,42 @@
   // (cheap, and needed so the assignee dropdowns above pick up the change
   // right away); the filter box instead just shows/hides already-built
   // rows in place, so typing into it doesn't lose focus on every keystroke.
+  // "Bil för dagen" for one attendee: their car in grey plus a chooser
+  // ("Automatiskt (Buss 1)" or one of the real cars).
+  function dayCarControl(h) {
+    const wrap = document.createElement("span");
+    wrap.className = "attendee-daycar";
+    const map = state.eventAttendeeDayCars;
+    const hand = carKey(map[h.uuid]);
+    const auto = derivedDayCar(h.uuid);
+    const sel = document.createElement("select");
+    sel.className = "daycar-sel";
+    sel.title = "Bil för dagen";
+    sel.setAttribute("aria-label", "Bil för dagen för " + h.name);
+    sel.onclick = (e) => e.stopPropagation();
+    const o0 = document.createElement("option");
+    o0.value = "";
+    o0.textContent = "Automatiskt (" + (auto || "ingen") + ")";
+    sel.appendChild(o0);
+    const cars = realCarNames();
+    if (hand && cars.indexOf(hand) === -1) cars.push(hand);
+    cars.forEach((c) => {
+      const o = document.createElement("option");
+      o.value = c;
+      o.textContent = c;
+      sel.appendChild(o);
+    });
+    sel.value = hand || "";
+    sel.onchange = () => {
+      if (sel.value === "") delete map[h.uuid];
+      else map[h.uuid] = sel.value;
+      scheduleAutosave();
+      render();
+    };
+    wrap.appendChild(sel);
+    return wrap;
+  }
+
   function renderAttendeesBox() {
     const box = document.createElement("div");
     box.className = "attendee-box";
@@ -2131,7 +2415,7 @@
       box.appendChild(filterInput);
 
       const list = document.createElement("div");
-      list.className = "attendee-list";
+      list.className = "attendee-list" + (sameCarOn() ? " with-daycar" : "");
 
       function applyFilter() {
         const f = filterInput.value.trim().toLowerCase();
@@ -2157,6 +2441,7 @@
           };
           row.appendChild(cb);
           row.appendChild(document.createTextNode(" " + h.name));
+          if (sameCarOn() && attendeeSet.has(h.uuid)) row.appendChild(dayCarControl(h));
           list.appendChild(row);
         });
 

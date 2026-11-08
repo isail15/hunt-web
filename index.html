@@ -310,6 +310,30 @@
     cursor: pointer;
   }
   .attendee-row input { width: auto; }
+  .hunter-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 0 0 12px; }
+  .hunter-toolbar .hunter-count { font-size: 14px; }
+  .hunter-toolbar input[type=text] { flex: 1 1 200px; min-width: 0; max-width: 360px; }
+  .hunter-group h3 { font-size: 14px; margin: 16px 0 4px; }
+  .hunter-row {
+    display: grid;
+    grid-template-columns: auto minmax(150px, 1fr) minmax(0, 2fr) auto;
+    align-items: center;
+    gap: 4px 10px;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .hunter-row input[type=checkbox] { width: auto; }
+  .hunter-row .h-nick { color: var(--muted); font-size: 12px; margin-left: 4px; }
+  .hunter-row .h-places { color: var(--muted); font-size: 12px; }
+  .hunter-row .h-warn { color: #e8590c; font-weight: 600; }
+  .hunter-free { margin-top: 18px; font-size: 13px; }
+  .hunter-free ul { margin: 4px 0 0; padding-left: 18px; }
+  @media (max-width: 640px) {
+    .hunter-row { grid-template-columns: auto 1fr; }
+    .hunter-row .h-places, .hunter-row .attendee-daycar { grid-column: 2; }
+  }
   table.assign [data-freeform] { margin-top: 4px; }
   #fileInput { display: none; }
   .more-wrap { position: relative; display: inline-block; }
@@ -535,6 +559,7 @@
 
 <nav class="tabs no-print" id="tabs">
   <button data-tab="setup" class="active">Förberedelse</button>
+  <button data-tab="hunters">Jägare</button>
   <button data-tab="assign">Passfördelning</button>
   <button data-tab="report">Rapport</button>
   <button data-tab="mobile">Mobilrapport</button>
@@ -810,7 +835,7 @@
     // Older exports (and anything from before this field existed) have no
     // eventAttendees at all — default to "everyone in the roster attends"
     // so nothing that used to show up in the assignee dropdown silently
-    // disappears; Fredrik can then narrow it down from the Deltagare box.
+    // disappears; Fredrik can then narrow it down in the Jägare tab.
     if (!Array.isArray(state.eventAttendees)) {
       state.eventAttendees = state.hunters.map((h) => h.uuid);
     }
@@ -2132,6 +2157,7 @@ function mergePackages(baseIn, localIn, remoteIn) {
     }
 
     if (ui.tab === "setup") renderSetup(app);
+    else if (ui.tab === "hunters") renderHunters(app);
     else if (ui.tab === "assign") renderAssign(app);
     else if (ui.tab === "mobile") renderMobileReport(app);
     else renderReport(app);
@@ -2205,7 +2231,7 @@ function mergePackages(baseIn, localIn, remoteIn) {
       p: [
         "Varje skytt får en bil för dagen: den bil hen står i i första såten, om du inte väljer en annan. Grupper som inte är bilar (t.ex. ”Åker med hundförare”, ”Går till pass”) påverkar aldrig någons bil.",
         "Under Passfördelning visas ”(Buss 2)” i orange efter namnet när skytten står i en annan bil än sin egen, och i jägarlistan kommer de som hör till passets bil först. Det är bara en hjälp: du kan fortfarande placera vem du vill.",
-        "Bilen för dagen kan ändras per deltagare under Passfördelning → Visa/redigera deltagare. ”Automatiskt” räknar ut den igen. Inställningen följer med tillbaka till appen och syns inte i rapporterna.",
+        "Bilen för dagen kan ändras per deltagare under fliken Jägare. ”Automatiskt” räknar ut den igen. Inställningen följer med tillbaka till appen och syns inte i rapporterna.",
       ],
     },
     hot: {
@@ -2233,14 +2259,14 @@ function mergePackages(baseIn, localIn, remoteIn) {
       t: "Jägare",
       p: [
         "Vem som står på passet: en jägare, en funktionsroll (Hundförare, Utställare) eller ”✎ Skriv in namn…” om personen inte finns i listan.",
-        "Listan visar bara jägare som är markerade som deltagare i rutan ovanför.",
+        "Listan visar bara jägare som är markerade som deltagare under fliken Jägare (en som redan står på passet visas alltid).",
       ],
     },
     result: { t: "Resultat", p: ["Fritext om passets utfall. Följer med i Rapporten, på samma rad som passet."] },
     attendees: {
       t: "Deltagare",
       p: [
-        "Vilka jägare som är med den här dagen. Bara de visas i Jägare-listan under Passfördelning. ”X av Y” = markerade av alla i registret.",
+        "Vilka jägare som är med den här dagen. Bara de erbjuds i Jägare-listan under Passfördelning. ”X av Y” = markerade av alla i registret. Ändras under fliken Jägare. Registret själv (namn) ägs av appen; saknas någon skriver du in namnet på passet.",
       ],
     },
   };
@@ -2751,7 +2777,7 @@ function mergePackages(baseIn, localIn, remoteIn) {
     const wrap = document.createElement("div");
     const ordered = orderedEventDrives();
 
-    wrap.appendChild(renderAttendeesBox());
+    wrap.appendChild(renderAttendeeSummary());
 
     if (ordered.length === 0) {
       const empty = document.createElement("div");
@@ -2892,7 +2918,7 @@ function mergePackages(baseIn, localIn, remoteIn) {
     });
     html += "</optgroup>";
     html += '<optgroup label="Jägare">';
-    // Only today's attendees (see the Deltagare box) show up here — not
+    // Only today's attendees (see the Jägare tab) show up here — not
     // the whole Hunter catalog — so this list stays short and relevant.
     // A hunter already assigned here is always kept, even if they've
     // since been unchecked as an attendee, so an existing assignment
@@ -2960,86 +2986,250 @@ function mergePackages(baseIn, localIn, remoteIn) {
     return wrap;
   }
 
-  function renderAttendeesBox() {
+  // Passfördelning keeps just a one-line reminder; the list itself lives in
+  // the Jägare tab.
+  function renderAttendeeSummary() {
     const box = document.createElement("div");
     box.className = "attendee-box";
-
-    const attendeeSet = new Set(state.eventAttendees || []);
     const header = document.createElement("div");
     header.className = "attendee-header";
-    const countLabel = document.createElement("strong");
-    countLabel.textContent = "Deltagare: " + attendeeSet.size + " av " + state.hunters.length;
-    const toggleBtn = document.createElement("button");
-    toggleBtn.className = "btn small";
-    toggleBtn.textContent = ui.attendeeBoxOpen ? "Dölj deltagarlista" : "Visa/redigera deltagare";
-    toggleBtn.onclick = () => {
-      ui.attendeeBoxOpen = !ui.attendeeBoxOpen;
-      render();
-    };
     const countWrap = document.createElement("span");
+    const countLabel = document.createElement("strong");
+    countLabel.textContent = "Deltagare: " + (state.eventAttendees || []).length + " av " + state.hunters.length;
     countWrap.appendChild(countLabel);
     countWrap.insertAdjacentHTML("beforeend", helpBtn("attendees"));
+    const btn = document.createElement("button");
+    btn.className = "btn small";
+    btn.textContent = "Ändra under Jägare";
+    btn.onclick = () => {
+      ui.tab = "hunters";
+      ui.editingPost = null;
+      render();
+    };
     header.appendChild(countWrap);
-    header.appendChild(toggleBtn);
+    header.appendChild(btn);
     box.appendChild(header);
+    return box;
+  }
 
-    if (ui.attendeeBoxOpen) {
-      const hint = document.createElement("div");
-      hint.className = "hint";
-      hint.style.margin = "8px 0";
-      hint.textContent =
-        "Kryssa i vilka jägare som är med på den här jaktdagen — bara de visas sen i Jägare-listan under Passfördelning. " +
-        "Saknas någon helt? Skriv in namnet direkt på posten istället (\"✎ Skriv in namn…\" i Jägare-listan).";
-      box.appendChild(hint);
+  // Where each hunter stands today: uuid -> [{drive, labels[]}] in drive order.
+  function placementsByHunter() {
+    const names = new Map();
+    orderedEventDrives().forEach((ed, i) => names.set(ed.localId, { name: ed.driveName, order: i }));
+    const byHunter = new Map();
+    state.postAssignments.forEach((pa) => {
+      if (pa.assigneeType !== "hunter" || !pa.hunterUUID) return;
+      const d = names.get(pa.eventDriveLocalId);
+      if (!d) return;
+      if (!byHunter.has(pa.hunterUUID)) byHunter.set(pa.hunterUUID, new Map());
+      const m = byHunter.get(pa.hunterUUID);
+      if (!m.has(d.name)) m.set(d.name, { order: d.order, labels: [] });
+      m.get(d.name).labels.push(pa.postNumber + (pa.postCode || ""));
+    });
+    const out = new Map();
+    byHunter.forEach((m, uuid) => {
+      out.set(uuid, [...m.entries()].sort((x, y) => x[1].order - y[1].order)
+        .map(([drive, v]) => ({ drive: drive, labels: v.labels })));
+    });
+    return out;
+  }
 
-      const filterInput = document.createElement("input");
-      filterInput.type = "text";
-      filterInput.className = "attendee-filter";
-      filterInput.placeholder = "Filtrera namn…";
-      filterInput.value = ui.attendeeFilter || "";
-      box.appendChild(filterInput);
+  function passCountOf(places) {
+    return (places || []).reduce((n, p) => n + p.labels.length, 0);
+  }
 
-      const list = document.createElement("div");
-      list.className = "attendee-list" + (sameCarOn() ? " with-daycar" : "");
+  // ---- Jägare tab: who is at this hunt. Backed by state.eventAttendees (a
+  // plain array of Hunter uuids, so it round-trips through the JSON like
+  // everything else). The Jägare picker under Passfördelning only offers
+  // these. The registry itself (names) belongs to the app, so nobody is
+  // created here: someone missing is typed straight onto a pass instead.
+  function renderHunters(app) {
+    app.innerHTML = "";
+    const wrap = document.createElement("div");
+    wrap.className = "hunter-tab";
+    app.appendChild(wrap);
 
-      function applyFilter() {
-        const f = filterInput.value.trim().toLowerCase();
-        list.querySelectorAll(".attendee-row").forEach((row) => {
-          row.style.display = row.dataset.name.indexOf(f) === -1 ? "none" : "";
-        });
-      }
-
-      [...state.hunters]
-        .sort((a, b) => a.name.localeCompare(b.name, "sv"))
-        .forEach((h) => {
-          const row = document.createElement("label");
-          row.className = "attendee-row";
-          row.dataset.name = h.name.toLowerCase();
-          const cb = document.createElement("input");
-          cb.type = "checkbox";
-          cb.checked = attendeeSet.has(h.uuid);
-          cb.onchange = () => {
-            const set = new Set(state.eventAttendees || []);
-            if (cb.checked) set.add(h.uuid); else set.delete(h.uuid);
-            state.eventAttendees = [...set];
-            render();
-          };
-          row.appendChild(cb);
-          row.appendChild(document.createTextNode(" " + h.name));
-          if (sameCarOn() && attendeeSet.has(h.uuid)) row.appendChild(dayCarControl(h));
-          list.appendChild(row);
-        });
-
-      box.appendChild(list);
-      applyFilter();
-
-      filterInput.oninput = () => {
-        ui.attendeeFilter = filterInput.value;
-        applyFilter();
-      };
+    if (!state.hunters.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-state";
+      empty.textContent = "Registret är tomt i den här filen — det finns inga jägare att välja bland.";
+      wrap.appendChild(empty);
+      return;
     }
 
-    return box;
+    const attendeeSet = new Set(state.eventAttendees || []);
+    const places = placementsByHunter();
+
+    const bar = document.createElement("div");
+    bar.className = "hunter-toolbar";
+    const count = document.createElement("span");
+    count.className = "hunter-count";
+    count.innerHTML = "<strong>Deltagare: " + attendeeSet.size + " av " + state.hunters.length + "</strong>" + helpBtn("attendees");
+    const filterInput = document.createElement("input");
+    filterInput.type = "text";
+    filterInput.placeholder = "Sök namn…";
+    filterInput.value = ui.attendeeFilter || "";
+    const allBtn = document.createElement("button");
+    allBtn.className = "btn small";
+    allBtn.textContent = "Markera alla";
+    allBtn.title = "Gäller bara de som syns i sökningen";
+    const noneBtn = document.createElement("button");
+    noneBtn.className = "btn small";
+    noneBtn.textContent = "Avmarkera alla";
+    noneBtn.title = "Gäller bara de som syns i sökningen";
+    bar.appendChild(count);
+    bar.appendChild(filterInput);
+    bar.appendChild(allBtn);
+    bar.appendChild(noneBtn);
+    wrap.appendChild(bar);
+
+    const hint = document.createElement("div");
+    hint.className = "hint";
+    hint.style.margin = "0 0 8px";
+    hint.textContent =
+      "Kryssa i vilka som är med den här jaktdagen — bara de erbjuds under Passfördelning. " +
+      "Saknas någon i registret? Skriv in namnet på passet (”✎ Skriv in namn…”) så lägger du in personen i appen efteråt.";
+    wrap.appendChild(hint);
+
+    const sorted = [...state.hunters].sort((a, b) => a.name.localeCompare(b.name, "sv"));
+    const groups = [
+      { title: "Deltar", rows: sorted.filter((h) => attendeeSet.has(h.uuid)) },
+      { title: "Övriga i registret", rows: sorted.filter((h) => !attendeeSet.has(h.uuid)) },
+    ];
+    const rowEls = [];
+    const groupEls = [];
+
+    function rowFor(h) {
+      const attending = attendeeSet.has(h.uuid);
+      const pl = places.get(h.uuid);
+      const row = document.createElement("label");
+      row.className = "hunter-row";
+      row.dataset.name = (h.name + " " + (h.nickname || "")).toLowerCase();
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = attending;
+      cb.onchange = () => setAttending([h], cb.checked, () => { cb.checked = !cb.checked; });
+      const name = document.createElement("span");
+      name.appendChild(document.createTextNode(h.name));
+      if (h.nickname) {
+        const nick = document.createElement("span");
+        nick.className = "h-nick";
+        nick.textContent = "”" + h.nickname + "”";
+        name.appendChild(nick);
+      }
+      const where = document.createElement("span");
+      where.className = "h-places";
+      if (pl && pl.length) {
+        where.textContent = pl.map((p) => p.drive + ": " + p.labels.join(", ")).join(" · ");
+        if (!attending) {
+          const w = document.createElement("span");
+          w.className = "h-warn";
+          w.textContent = "Står på pass men är inte anmäld. ";
+          where.insertBefore(w, where.firstChild);
+        }
+      }
+      row.appendChild(cb);
+      row.appendChild(name);
+      row.appendChild(where);
+      if (sameCarOn() && attending) row.appendChild(dayCarControl(h));
+      return row;
+    }
+
+    groups.forEach((g) => {
+      const sec = document.createElement("section");
+      sec.className = "hunter-group";
+      const h3 = document.createElement("h3");
+      h3.textContent = g.title + " (" + g.rows.length + ")";
+      sec.appendChild(h3);
+      g.rows.forEach((h) => {
+        const el = rowFor(h);
+        rowEls.push({ el: el, h: h });
+        sec.appendChild(el);
+      });
+      if (!g.rows.length) {
+        const none = document.createElement("div");
+        none.className = "hint";
+        none.textContent = g.title === "Deltar" ? "Ingen är markerad ännu." : "Alla i registret är markerade.";
+        sec.appendChild(none);
+      }
+      groupEls.push({ el: sec, count: g.rows.length });
+      wrap.appendChild(sec);
+    });
+
+    function visibleHunters() {
+      return rowEls.filter((r) => r.el.style.display !== "none").map((r) => r.h);
+    }
+
+    function applyFilter() {
+      const f = filterInput.value.trim().toLowerCase();
+      rowEls.forEach((r) => { r.el.style.display = r.el.dataset.name.indexOf(f) === -1 ? "none" : ""; });
+      groupEls.forEach((g) => {
+        const anyVisible = [...g.el.querySelectorAll(".hunter-row")].some((r) => r.style.display !== "none");
+        g.el.style.display = !f || anyVisible || g.count === 0 ? "" : "none";
+      });
+    }
+    filterInput.oninput = () => {
+      ui.attendeeFilter = filterInput.value;
+      applyFilter();
+    };
+    allBtn.onclick = () => setAttending(visibleHunters(), true);
+    noneBtn.onclick = () => setAttending(visibleHunters(), false);
+    applyFilter();
+
+    // Names typed straight onto passes: not in the registry, so the app
+    // needs them added by hand afterwards.
+    const typed = new Map();
+    state.postAssignments.forEach((pa) => {
+      if (pa.assigneeType !== "freeform" || !pa.freeformName || !pa.freeformName.trim()) return;
+      const k = pa.freeformName.trim();
+      typed.set(k, (typed.get(k) || 0) + 1);
+    });
+    if (typed.size) {
+      const box = document.createElement("div");
+      box.className = "hunter-free";
+      const t = document.createElement("strong");
+      t.textContent = "Inskrivna namn (finns inte i registret)";
+      box.appendChild(t);
+      const ul = document.createElement("ul");
+      [...typed.entries()].sort((a, b) => a[0].localeCompare(b[0], "sv")).forEach(([n, c]) => {
+        const li = document.createElement("li");
+        li.textContent = n + " — " + c + " pass";
+        ul.appendChild(li);
+      });
+      box.appendChild(ul);
+      const note = document.createElement("div");
+      note.className = "hint";
+      note.style.marginTop = "4px";
+      note.textContent = "De följer med som fritext. Lägg in personen som jägare i appen så blir det en riktig tilldelning.";
+      box.appendChild(note);
+      wrap.appendChild(box);
+    }
+  }
+
+  // Marks hunters in or out of today's attendees. Taking someone out who
+  // still stands on passes asks first (the passes keep the name, flagged
+  // "ej anmäld"). `undo` restores a single checkbox if the answer is no.
+  function setAttending(hunters, on, undo) {
+    const set = new Set(state.eventAttendees || []);
+    const targets = hunters.filter((h) => set.has(h.uuid) !== on);
+    if (!targets.length) return;
+    if (!on) {
+      const places = placementsByHunter();
+      const placed = targets.filter((h) => passCountOf(places.get(h.uuid)) > 0);
+      if (placed.length) {
+        const msg = placed.length === 1
+          ? placed[0].name + " står på " + passCountOf(places.get(placed[0].uuid)) + " pass. Ta bort som deltagare ändå? Passen behåller namnet och märks ”ej anmäld”."
+          : placed.length + " av dem står på pass. Ta bort som deltagare ändå? Passen behåller namnen och märks ”ej anmäld”.";
+        if (!confirm(msg)) {
+          if (undo) undo();
+          return;
+        }
+      }
+    }
+    targets.forEach((h) => { if (on) set.add(h.uuid); else set.delete(h.uuid); });
+    // Keep the registry's order so the array doesn't shuffle on every click.
+    state.eventAttendees = state.hunters.map((h) => h.uuid).filter((u) => set.has(u));
+    render();
   }
 
   // ---- Report tab: printable assignment sheet, grouped by car ----
